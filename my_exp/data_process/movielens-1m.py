@@ -19,8 +19,8 @@ def load_and_process_data(data_path):
     user_encoder = LabelEncoder()
     movie_encoder = LabelEncoder()
     
-    ratings_sorted['user_id'] = user_encoder.fit_transform(ratings_sorted['user_id'])
-    ratings_sorted['movie_id'] = movie_encoder.fit_transform(ratings_sorted['movie_id'])
+    ratings_sorted['user_id'] = user_encoder.fit_transform(ratings_sorted['user_id']) + 1  # 从1开始编号
+    ratings_sorted['movie_id'] = movie_encoder.fit_transform(ratings_sorted['movie_id']) + 1  # 从1开始编号
     
     # 按用户分组
     user_groups = ratings_sorted.groupby('user_id')
