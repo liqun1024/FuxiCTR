@@ -1,0 +1,7 @@
+### Tiny data for demo only
+ml-1m:
+    data_root: ../../../my_datasets/
+    data_format: npz
+    train_data: ../../../my_datasets/ml-1m/train.npz
+    valid_data: ../../../my_datasets/ml-1m/valid.npz
+    test_data: ../../../my_datasets/ml-1m/test.npz
