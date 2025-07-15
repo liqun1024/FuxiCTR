@@ -13,8 +13,8 @@ Base:
     feature_config: null
 
 
-DIN: # This is a config template
-    model: DIN
+SIM_default: # This is a config template
+    model: SIM
 
     dataset_id: ml-1m
     shuffle: True
@@ -23,13 +23,16 @@ DIN: # This is a config template
     embedding_regularizer: 0
     net_regularizer: 0
     embedding_dim: 32
-    dnn_hidden_units: [120, 64]
+    dnn_hidden_units: [64, 32]
     dnn_activations: relu
-    attention_hidden_units: [64]
-    attention_hidden_activations: "Dice"
-    attention_output_activation: null
+    attention_dim: 32
+    num_heads: 2
+    gsu_type: "soft"
+    alpha: 1
+    beta: 1
     attention_dropout: 0
-    din_use_softmax: False
+    topk: 50
+    short_seq_len: 50
     net_dropout: 0
     batch_norm: False
 
