@@ -18,7 +18,7 @@
 import os
 os.chdir(os.path.dirname(os.path.realpath(__file__)))
 import sys
-sys.path.append('../../..')
+sys.path.append('../..')
 
 import logging
 from datetime import datetime
@@ -39,8 +39,8 @@ if __name__ == '__main__':
     '''
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='./config/', help='The config directory.')
-    parser.add_argument('--expid', type=str, default='DeepFM_test', help='The experiment id to run.')
-    parser.add_argument('--gpu', type=int, default=-1, help='The gpu index, -1 for cpu')
+    parser.add_argument('--expid', type=str, default='DIN', help='The experiment id to run.')
+    parser.add_argument('--gpu', type=int, default=0, help='The gpu index, -1 for cpu')
     args = vars(parser.parse_args())
     
     experiment_id = args['expid']
@@ -62,7 +62,7 @@ if __name__ == '__main__':
     model = model_class(feature_map, **params)
     model.count_parameters() # print number of parameters used in model
 
-    train_gen, valid_gen = MovieLensDataLoader(feature_map, **params).make_iterator()
+    train_gen, valid_gen = MovieLensDataLoader(feature_map, stage='train', **params).make_iterator()
     model.fit(train_gen, validation_data=valid_gen, **params)
 
     logging.info('****** Validation evaluation ******')
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     test_result = {}
     if params["test_data"]:
         logging.info('******** Test evaluation ********')
-        test_gen = MovieLensDataLoader(feature_map, **params).make_iterator()
+        test_gen = MovieLensDataLoader(feature_map, stage='test', **params).make_iterator()
         test_result = model.evaluate(test_gen)
         
     result_filename = Path(args['config']).name.replace(".yaml", "") + '.csv'

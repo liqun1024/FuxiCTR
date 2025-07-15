@@ -1,17 +1,12 @@
 DIN: # This is a config template
     model: DIN
 
-    data_root: '../../my_datasets'
     dataset_id: ml-1m
-    train_data: '../../my_datasets/ml-1m/train.npz'
-    valid_data: '../../my_datasets/ml-1m/valid.npz'
-    test_data: '../../my_datasets/ml-1m/test.npz'
-    user_info: '../../my_datasets/ml-1m/user_features.json'
-    item_info: '../../my_datasets/ml-1m/movie_features.json'
     shuffle: True
     batch_size: 8192
     num_workers: 4
 
+    model_root: './checkpoints/'
     embedding_regularizer: 0
     net_regularizer: 0
     embedding_dim: 32
@@ -25,6 +20,7 @@ DIN: # This is a config template
     net_dropout: 0
     batch_norm: False
 
+    verbose: 1
     loss: 'binary_crossentropy'
     metrics: [AUC, logloss]
     task: binary_classification
@@ -32,7 +28,8 @@ DIN: # This is a config template
     learning_rate: 1.0e-3
     epochs: 100
     seed: 42
-    monitor: {'AUC': 1, 'logloss': -1}
+    # monitor: {'AUC': 1, 'logloss': -1}
+    monitor: 'AUC'
     monitor_mode: 'max'
     accumulation_steps: 1
     gpu: 0

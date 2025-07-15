@@ -43,9 +43,9 @@ def load_and_process_data(data_path):
     user_groups = ratings_sorted.groupby('user_id')
     
     # 初始化各数据集
-    train_data = {'user_id': [], 'movie_id': [], 'label': [], 'history_seq': [], 'history_ts': []}
-    val_data = {'user_id': [], 'movie_id': [], 'label': [], 'history_seq': [], 'history_ts': []}
-    test_data = {'user_id': [], 'movie_id': [], 'label': [], 'history_seq': [], 'history_ts': []}
+    train_data = {'user_id': [], 'item_id': [], 'label': [], 'history_seq': [], 'history_ts': []}
+    val_data = {'user_id': [], 'item_id': [], 'label': [], 'history_seq': [], 'history_ts': []}
+    test_data = {'user_id': [], 'item_id': [], 'label': [], 'history_seq': [], 'history_ts': []}
     
     # 统计过滤的用户
     total_users = len(user_groups)
@@ -77,7 +77,7 @@ def load_and_process_data(data_path):
             history = train.iloc[:i]['movie_id'].values
             history_ts = train.iloc[:i]['timestamp'].values
             train_data['user_id'].append(record['user_id'])
-            train_data['movie_id'].append(record['movie_id'])
+            train_data['item_id'].append(record['movie_id'])
             train_data['label'].append(record['label'])
             train_data['history_seq'].append(history[-50:])  # 只保留最近的50个
             train_data['history_ts'].append(history_ts[-50:])  # 添加对应的timestamp
@@ -87,7 +87,7 @@ def load_and_process_data(data_path):
             idx = train_end + i
             full_group = group.iloc[:idx]
             val_data['user_id'].append(record.user_id)
-            val_data['movie_id'].append(record.movie_id)
+            val_data['item_id'].append(record.movie_id)
             val_data['label'].append(record.label)
             val_data['history_seq'].append(full_group['movie_id'].values[-50:])  # 滑动窗口
             val_data['history_ts'].append(full_group['timestamp'].values[-50:])  # 滑动窗口
@@ -97,7 +97,7 @@ def load_and_process_data(data_path):
             idx = val_end + i
             full_group = group.iloc[:idx]
             test_data['user_id'].append(record.user_id)
-            test_data['movie_id'].append(record.movie_id)
+            test_data['item_id'].append(record.movie_id)
             test_data['label'].append(record.label)
             test_data['history_seq'].append(full_group['movie_id'].values[-50:])  # 滑动窗口
             test_data['history_ts'].append(full_group['timestamp'].values[-50:])  # 滑动窗口
@@ -123,7 +123,7 @@ def load_and_process_data(data_path):
     def prepare_data(data_dict):
         return pd.DataFrame({
             'user_id': data_dict['user_id'],
-            'movie_id': data_dict['movie_id'],
+            'item_id': data_dict['item_id'],
             'label': data_dict['label'],
             'history_seq': data_dict['history_seq'],
             'history_ts': data_dict['history_ts']

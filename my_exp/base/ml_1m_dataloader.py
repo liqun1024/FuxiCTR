@@ -78,8 +78,8 @@ class SeqDataLoader(DataLoader):
 class BatchCollator(object):
     def __init__(self, feature_map, column_index, user_info, item_info):
         self.feature_map = feature_map
-        self.user_info = pd.read_parquet(user_info).set_index("user_id")
-        self.item_info = pd.read_parquet(item_info).set_index("movie_id")
+        self.user_info = pd.read_parquet(user_info).set_index("user_id", drop=False)
+        self.item_info = pd.read_parquet(item_info).set_index("movie_id", drop=False)
         self.column_index = column_index
 
     def __call__(self, batch):
@@ -89,15 +89,25 @@ class BatchCollator(object):
         for col, idx in self.column_index.items():
             if col in all_cols:
                 batch_dict[col] = batch_tensor[:, idx]
+
+        user_ids = batch_dict["user_id"].numpy().flatten()
+        user_info = self.user_info.loc[user_ids]
+        user_dict = dict()
+        for col in user_info.columns:
+            if col in all_cols:
+                batch_dict[col] = torch.from_numpy(np.array(user_info[col].to_list()))
+
         batch_seqs = batch_dict["history_seq"].numpy()
+        batch_dict.pop("history_seq", None)
         mask = (torch.from_numpy(batch_seqs) > 0).float() # zeros for masked positions
-        item_index = batch_dict["movie_id"].numpy().reshape(-1, 1)
-        batch_items = np.hstack([batch_seqs, item_index]).flatten()
-        item_info = self.item_info.iloc[batch_items]
+        item_index = batch_dict["item_id"].numpy().reshape(-1, 1)
+        batch_items = np.hstack([batch_seqs, item_index])
+        item_info = self.item_info.loc[batch_items.flatten()]
         item_dict = dict()
         for col in item_info.columns:
             if col in all_cols:
-                item_dict[col] = torch.from_numpy(np.array(item_info[col].to_list()))
+                item_dict[col] = torch.from_numpy(np.array(item_info[col].to_list()).reshape(batch_items.shape))
+
         return batch_dict, item_dict, mask
 
 
