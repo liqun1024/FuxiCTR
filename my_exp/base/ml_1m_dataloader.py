@@ -54,7 +54,7 @@ class ParquetDataset(Dataset):
 
 
 class SeqDataLoader(DataLoader):
-    def __init__(self, feature_map, data_path, user_info, item_info, batch_size=32, shuffle=False,
+    def __init__(self, feature_map, data_path, user_info, item_info, batch_size=32, shuffle=False, max_len=50,
                  num_workers=1, **kwargs):
         if not data_path.endswith(".parquet"):
             data_path += ".parquet"
@@ -65,7 +65,7 @@ class SeqDataLoader(DataLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             num_workers=num_workers,
-            collate_fn=BatchCollator(feature_map, column_index,user_info, item_info)
+            collate_fn=BatchCollator(feature_map, column_index,user_info, item_info, max_len)
         )
         self.num_samples = len(self.dataset)
         self.num_blocks = 1
@@ -76,11 +76,12 @@ class SeqDataLoader(DataLoader):
 
 
 class BatchCollator(object):
-    def __init__(self, feature_map, column_index, user_info, item_info):
+    def __init__(self, feature_map, column_index, user_info, item_info, max_len):
         self.feature_map = feature_map
         self.user_info = pd.read_parquet(user_info).set_index("user_id", drop=False)
         self.item_info = pd.read_parquet(item_info).set_index("movie_id", drop=False)
         self.column_index = column_index
+        self.max_len = max_len
 
     def __call__(self, batch):
         batch_tensor = default_collate(batch)
@@ -98,6 +99,7 @@ class BatchCollator(object):
                 batch_dict[col] = torch.from_numpy(np.array(user_info[col].to_list()))
 
         batch_seqs = batch_dict["history_seq"].numpy()
+        batch_seqs = batch_seqs[:, -self.max_len:]
         batch_dict.pop("history_seq", None)
         mask = (torch.from_numpy(batch_seqs) > 0).float() # zeros for masked positions
         item_index = batch_dict["item_id"].numpy().reshape(-1, 1)
