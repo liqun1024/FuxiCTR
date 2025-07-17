@@ -1,0 +1,5 @@
+taobao:
+    data_root: '../../my_datasets'
+    train_data: '../../my_datasets/taobao/train.parquet'
+    valid_data: '../../my_datasets/taobao/valid.parquet'
+    test_data: '../../my_datasets/taobao/test.parquet'

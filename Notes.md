@@ -17,3 +17,5 @@ NpzFile 'train.npz' with keys: user_id, movie_id, label, history_seq, history_ts
 train valid test分别有507186，143849，76118条数据。
 
 **Note**:潜在的问题是，在测试集，用户序列不是最新的（即测试集的部分没有被训练，作为流式数据不知道会不会有问题。
+这样过滤是否存在穿越问题？ 即按照每条用户自己的时间，但是训练集每条用户的截止时间不相同。
+

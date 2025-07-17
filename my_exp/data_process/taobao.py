@@ -2,6 +2,8 @@ import pickle as pkl
 import pandas as pd
 import random
 import numpy as np
+from tqdm import tqdm
+import os
 
 MAX_LEN_ITEM = 200
 
@@ -56,9 +58,8 @@ def gen_dataset(user_df, item_df, item_cnt):
     split_time_val = user_last_touch_time_sorted[int(len(user_last_touch_time_sorted) * 0.9)]
 
     cnt = 0
-    for uid, hist in user_df:
+    for uid, hist in tqdm(user_df):
         cnt += 1
-        print(cnt)
         item_hist = hist['iid'].tolist()
         cate_hist = hist['cid'].tolist()
         btag_hist = hist['btag'].tolist()
@@ -154,7 +155,7 @@ def add_neg_samples(train_data, val_data, test_data):
     # 3. 遍历所有数据，添加负采样历史
     current_sample_idx = 0
     for dataset in [train_data, val_data, test_data]:
-        for row in dataset:
+        for row in tqdm(dataset):
             pos_hist_set = set(zip(row['item_hist'], row['cate_hist']))
             neg_choices_for_sample = neg_array[current_sample_idx]
             current_sample_idx += 1
@@ -184,6 +185,8 @@ def main():
     # 设置路径
     data_path = 'my_datasets/raw/taobao/UserBehavior.csv'  # 替换为你的MovieLens-1M数据集路径
     output_path = 'my_datasets/taobao'      # 输出目录
+    if not os.path.exists(output_path):
+        os.mkdir(output_path)
 
 
     df = to_df(data_path)
@@ -202,8 +205,8 @@ def main():
     print(f"正在保存训练集到 {output_path}/train.parquet...")
     train_df.to_parquet(f"{output_path}/train.parquet", index=False)
 
-    print(f"正在保存验证集到 {output_path}/val.parquet...")
-    val_df.to_parquet(f"{output_path}/val.parquet", index=False)
+    print(f"正在保存验证集到 {output_path}/valid.parquet...")
+    val_df.to_parquet(f"{output_path}/valid.parquet", index=False)
 
     print(f"正在保存测试集到 {output_path}/test.parquet...")
     test_df.to_parquet(f"{output_path}/test.parquet", index=False)
