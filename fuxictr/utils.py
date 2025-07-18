@@ -83,7 +83,7 @@ def set_logger(params):
         
     logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s P%(process)d %(levelname)s %(message)s',
-                        handlers=[logging.FileHandler(log_file, mode='w'),
+                        handlers=[logging.FileHandler(log_file, mode='a'),
                                   logging.StreamHandler()])
     logging.info("FuxiCTR version: " + fuxictr.__version__)
 

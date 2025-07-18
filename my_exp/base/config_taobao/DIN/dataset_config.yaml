@@ -1,7 +1,0 @@
-ml-1m:
-    data_root: '../../my_datasets'
-    train_data: '../../my_datasets/ml-1m/train.parquet'
-    valid_data: '../../my_datasets/ml-1m/valid.parquet'
-    test_data: '../../my_datasets/ml-1m/test.parquet'
-    user_info: '../../my_datasets/ml-1m/user_features.parquet'
-    item_info: '../../my_datasets/ml-1m/movie_features.parquet'

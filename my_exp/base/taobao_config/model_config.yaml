@@ -1,0 +1,89 @@
+Base:
+    model_root: './checkpoints/'
+    num_workers: 4
+    verbose: 1
+    early_stop_patience: 5
+    pickle_feature_encoder: True
+    save_best_only: True
+    eval_steps: null
+    debug_mode: False
+    group_id: null
+    use_features: null
+    feature_specs: null
+    feature_config: null
+
+    dataset_id: taobao
+    shuffle: True
+    batch_size: 8192
+
+    loss: 'binary_crossentropy'
+    metrics: [AUC, logloss]
+    task: binary_classification
+    optimizer: adam
+    epochs: 1
+    seed: 42
+    eval_steps: 5
+
+    monitor: 'AUC'
+    monitor_mode: 'max'
+    accumulation_steps: 1
+    gpu: 0
+
+DIN_Short: # This is a config template
+    model: DIN
+
+    max_len: 20
+    embedding_regularizer: 0
+    net_regularizer: 0
+    embedding_dim: 16
+    dnn_hidden_units: [64, 32]
+    dnn_activations: relu
+    attention_hidden_units: [64]
+    attention_hidden_activations: "Dice"
+    attention_output_activation: null
+    attention_dropout: 0
+    din_use_softmax: True
+    net_dropout: 0
+    batch_norm: False
+
+    # learning_rate: 3.0e-2
+
+DIN_Long: # This is a config template
+    model: DIN
+
+    max_len: 200
+    embedding_regularizer: 0
+    net_regularizer: 0
+    embedding_dim: 16
+    dnn_hidden_units: [64, 32]
+    dnn_activations: relu
+    attention_hidden_units: [64]
+    attention_hidden_activations: "Dice"
+    attention_output_activation: null
+    attention_dropout: 0
+    din_use_softmax: True
+    net_dropout: 0
+    batch_norm: False
+
+    # learning_rate: 4.0e-2
+
+SIM: # This is a config template
+    model: SIM
+
+    embedding_regularizer: 0
+    net_regularizer: 0
+    embedding_dim: 32
+    dnn_hidden_units: [64, 32]
+    dnn_activations: relu
+    attention_dim: 64
+    num_heads: 2
+    gsu_type: "soft"
+    alpha: 1
+    beta: 1
+    attention_dropout: 0
+    topk: 20
+    short_seq_len: 20
+    net_dropout: 0
+    batch_norm: False
+
+    # learning_rate: 4.0e-2

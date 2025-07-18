@@ -38,14 +38,16 @@ if __name__ == '__main__':
     ''' Usage: python run_expid.py --config {config_dir} --expid {experiment_id} --gpu {gpu_device_id}
     '''
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='./config_taobao/SIM', help='The config directory.')
-    parser.add_argument('--expid', type=str, default='SIM', help='The experiment id to run.')
+    parser.add_argument('--config', type=str, default='./taobao_config', help='The config directory.')
+    parser.add_argument('--expid', type=str, default='DIN_Long', help='The experiment id to run.')
     parser.add_argument('--gpu', type=int, default=0, help='The gpu index, -1 for cpu')
+    parser.add_argument('--learning_rate', type=float, default=1e-3, help='The model learning rate.')
     args = vars(parser.parse_args())
     
     experiment_id = args['expid']
     params = load_config(args['config'], experiment_id)
     params['gpu'] = args['gpu']
+    params['learning_rate'] = args['learning_rate']
     set_logger(params)
     logging.info("Params: " + print_to_json(params))
     seed_everything(seed=params['seed'])
