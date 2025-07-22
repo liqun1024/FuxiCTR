@@ -127,7 +127,7 @@ class LETTER(T5ForConditionalGeneration):
             return_dict=return_dict,
         )
 
-        sequence_output = decoder_outputs[0]
+        sequence_output = decoder_outputs[0]  # (batch_size, sequence_length, model_dim)
 
         if self.model_parallel:
             torch.cuda.set_device(self.encoder.first_device)
@@ -139,7 +139,7 @@ class LETTER(T5ForConditionalGeneration):
         if self.config.tie_word_embeddings:
             sequence_output = sequence_output * (self.model_dim**-0.5)
 
-        lm_logits = self.lm_head(sequence_output)
+        lm_logits = self.lm_head(sequence_output)  # (batch_size, sequence_length, vocab_size)
         
         # Loss Computing!
         loss = None
