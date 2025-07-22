@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import os
+import random
 
 # 配置参数
 class Config:
@@ -69,18 +70,12 @@ class SASRecModel(nn.Module):
     def __init__(self, config):
         super(SASRecModel, self).__init__()
         self.config = config
-        
-        # Item embedding
         self.item_emb = nn.Embedding(
             config.item_vocab_size, 
             config.embedding_dim, 
             padding_idx=config.pad_token
         )
-        
-        # Positional embedding
         self.pos_emb = nn.Embedding(config.max_seq_length, config.embedding_dim)
-        
-        # Transformer blocks
         self.attention_layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
                 d_model=config.embedding_dim,
@@ -89,66 +84,67 @@ class SASRecModel(nn.Module):
                 batch_first=True
             ) for _ in range(config.num_blocks)
         ])
-        
-        # LayerNorm and Dropout
         self.layer_norm = nn.LayerNorm(config.embedding_dim)
         self.dropout = nn.Dropout(config.dropout_rate)
-        
-        # Output layer
-        self.output_layer = nn.Linear(config.embedding_dim, config.item_vocab_size)
-        
+        # self.output_layer = nn.Linear(config.embedding_dim, config.item_vocab_size) # 移除
+
     def forward(self, input_seq):
-        # 获取mask (padding部分为True)
         seq_mask = (input_seq == self.config.pad_token)
-        
-        # 获取位置编码
         positions = torch.arange(input_seq.size(1), dtype=torch.long, device=input_seq.device)
         positions = positions.unsqueeze(0).expand_as(input_seq)
-        
-        # Embedding
         item_embs = self.item_emb(input_seq)
         pos_embs = self.pos_emb(positions)
         seq_embs = item_embs + pos_embs
         seq_embs = self.dropout(seq_embs)
-        
-        # Transformer blocks
         attention_mask = self._get_attention_mask(input_seq)
         out = seq_embs
         for layer in self.attention_layers:
             out = layer(out, src_key_padding_mask=seq_mask, mask=attention_mask)
-        
         out = self.layer_norm(out)
-        
-        # 预测每个位置的输出
-        logits = self.output_layer(out)  # (batch_size, seq_len, vocab_size)
-        
-        return logits
-    
+        # 只输出序列embedding (batch_size, seq_len, embedding_dim)
+        return out
+
     def _get_attention_mask(self, input_seq):
-        """生成因果掩码，防止看到未来信息"""
         batch_size, seq_len = input_seq.size()
         mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
         return mask.to(input_seq.device)
 
-# 序列预测损失函数
+# BPR Loss实现
 class SequenceLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, num_negatives=100, item_vocab_size=5000000, embedding_dim=64):
         super(SequenceLoss, self).__init__()
-        self.criterion = nn.CrossEntropyLoss(ignore_index=0, reduction='none')
-        
-    def forward(self, logits, target_seq, mask):
-        # logits: (batch_size, seq_len, vocab_size)
+        self.num_negatives = num_negatives
+        self.item_vocab_size = item_vocab_size
+        self.embedding_dim = embedding_dim
+
+    def forward(self, seq_embs, target_seq, mask, item_emb_layer):
+        # seq_embs: (batch_size, seq_len, embedding_dim)
         # target_seq: (batch_size, seq_len)
         # mask: (batch_size, seq_len)
-        
-        # 计算每个位置的loss
-        loss = self.criterion(
-            logits.view(-1, logits.size(-1)), 
-            target_seq.view(-1)
-        ).view_as(target_seq)
-        
-        # 只计算有效位置的loss
-        masked_loss = loss * mask
+        batch_size, seq_len = target_seq.size()
+        device = seq_embs.device
+
+        # 正样本embedding
+        pos_emb = item_emb_layer(target_seq)  # (batch_size, seq_len, embedding_dim)
+
+        # 负样本采样
+        neg_items = torch.randint(
+            1, self.item_vocab_size, 
+            (batch_size, seq_len, self.num_negatives), 
+            device=device
+        )
+        neg_emb = item_emb_layer(neg_items)  # (batch_size, seq_len, num_negatives, embedding_dim)
+
+        # 扩展seq_embs用于与负样本做内积
+        seq_embs_exp = seq_embs.unsqueeze(2)  # (batch_size, seq_len, 1, embedding_dim)
+        pos_score = (seq_embs * pos_emb).sum(-1)  # (batch_size, seq_len)
+        neg_score = (seq_embs_exp * neg_emb).sum(-1)  # (batch_size, seq_len, num_negatives)
+
+        # BPR loss: log(sigmoid(pos_score - neg_score))
+        bpr_loss = -torch.log(torch.sigmoid(pos_score.unsqueeze(-1) - neg_score) + 1e-8)  # (batch_size, seq_len, num_negatives)
+        # mask扩展
+        mask = mask.unsqueeze(-1).expand_as(bpr_loss)
+        masked_loss = bpr_loss * mask
         return masked_loss.sum() / mask.sum()
 
 # 加载数据
@@ -180,7 +176,11 @@ def train_model():
     
     # 初始化模型
     model = SASRecModel(config).to(config.device)
-    criterion = SequenceLoss()
+    criterion = SequenceLoss(
+        num_negatives=100, 
+        item_vocab_size=config.item_vocab_size, 
+        embedding_dim=config.embedding_dim
+    )
     optimizer = optim.Adam(model.parameters(), lr=config.lr)
     
     # 训练循环
@@ -190,13 +190,11 @@ def train_model():
         train_loss = 0
         for batch in tqdm(train_loader, desc=f'Epoch {epoch+1}'):
             input_seq, target_seq, mask = [x.to(config.device) for x in batch]
-            
             optimizer.zero_grad()
-            logits = model(input_seq)
-            loss = criterion(logits, target_seq, mask)
+            seq_embs = model(input_seq)
+            loss = criterion(seq_embs, target_seq, mask, model.item_emb)
             loss.backward()
             optimizer.step()
-            
             train_loss += loss.item()
         
         # 验证
@@ -205,8 +203,8 @@ def train_model():
         with torch.no_grad():
             for batch in val_loader:
                 input_seq, target_seq, mask = [x.to(config.device) for x in batch]
-                logits = model(input_seq)
-                loss = criterion(logits, target_seq, mask)
+                seq_embs = model(input_seq)
+                loss = criterion(seq_embs, target_seq, mask, model.item_emb)
                 val_loss += loss.item()
         
         avg_train_loss = train_loss / len(train_loader)
@@ -225,8 +223,8 @@ def train_model():
     with torch.no_grad():
         for batch in test_loader:
             input_seq, target_seq, mask = [x.to(config.device) for x in batch]
-            logits = model(input_seq)
-            loss = criterion(logits, target_seq, mask)
+            seq_embs = model(input_seq)
+            loss = criterion(seq_embs, target_seq, mask, model.item_emb)
             test_loss += loss.item()
     
     print(f'Test Loss: {test_loss / len(test_loader):.4f}')
