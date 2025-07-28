@@ -5,8 +5,6 @@ from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-import os
-import random
 
 # 配置参数
 class Config:
@@ -50,10 +48,11 @@ class SASRecDataset(Dataset):
         target_seq = full_seq[1:]
         
         seq_len = len(input_seq)
+        target_len = self.config.max_seq_length - 1
         
         # 填充短序列
-        if seq_len < self.max_len:
-            pad_len = self.max_len - seq_len
+        if seq_len < target_len:
+            pad_len = target_len - seq_len
             input_seq = [self.pad_token] * pad_len + list(input_seq)
             target_seq = [self.pad_token] * pad_len + list(target_seq)
         
@@ -66,92 +65,208 @@ class SASRecDataset(Dataset):
         
         return input_seq, target_seq, mask
 
-class PreNormTransformerBlock(nn.Module):
-    def __init__(self, config):
-        super(PreNormTransformerBlock, self).__init__()
-        embed_dim = config.embedding_dim
-        num_heads = config.num_heads
-        ff_dim = config.ffn_dim if hasattr(config, 'ffn_dim') else embed_dim * 4
-        dropout = config.dropout_rate
-
-        self.attention = nn.MultiheadAttention(
-            embed_dim, num_heads, dropout=dropout, batch_first=True
-        )
-        self.ffn = nn.Sequential(
-            nn.Linear(embed_dim, ff_dim),
-            nn.GELU(),
-            nn.Linear(ff_dim, embed_dim),
-            nn.Dropout(dropout)
-        )
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x, src_mask=None, src_key_padding_mask=None):
-        # PreNorm: x + f(LN(x))
-        # Attention block
-        residual1 = x
-        x = self.norm1(x)
-        attn_out, _ = self.attention(
-            query=x,
-            key=x,
-            value=x,
-            attn_mask=src_mask,
-            key_padding_mask=src_key_padding_mask,
-            need_weights=False
-        )
-        x = residual1 + self.dropout(attn_out)
-
-        # FFN block
-        residual2 = x
-        x = self.norm2(x)
-        ffn_out = self.ffn(x)
-        x = residual2 + self.dropout(ffn_out)
-
-        return x
-
 
 class SASRecModel(nn.Module):
     def __init__(self, config):
         super(SASRecModel, self).__init__()
-        self.config = config
-        self.item_emb = nn.Embedding(
-            config.item_vocab_size,
-            config.embedding_dim,
-            padding_idx=config.pad_token
-        )
-        self.pos_emb = nn.Embedding(config.max_seq_length, config.embedding_dim)
-        # 使用自定义的 PreNorm Block
+        self.item_vocab_size = config.item_vocab_size
+        self.embedding_dim = config.embedding_dim
+        self.max_seq_length = config.max_seq_length - 1  # -1是因为输入序列不包含target
+        self.num_blocks = config.num_blocks
+        self.num_heads = config.num_heads
+        self.dropout_rate = config.dropout_rate
+        self.pad_token = config.pad_token
+        
+        # 物品嵌入层
+        self.item_emb = nn.Embedding(config.item_vocab_size, config.embedding_dim, padding_idx=config.pad_token)
+        
+        # 位置编码
+        self.positional_emb = nn.Embedding(self.max_seq_length, config.embedding_dim)
+        
+        # LayerNorm & Dropout
+        self.emb_dropout = nn.Dropout(config.dropout_rate)
+        self.layernorm = nn.LayerNorm(config.embedding_dim)
+        
+        # Transformer块
         self.transformer_blocks = nn.ModuleList([
-            PreNormTransformerBlock(config) for _ in range(config.num_blocks)
+            TransformerBlock(config.embedding_dim, config.num_heads, config.dropout_rate)
+            for _ in range(config.num_blocks)
         ])
-        self.layer_norm = nn.LayerNorm(config.embedding_dim)
-        self.dropout = nn.Dropout(config.dropout_rate)
-
+        
+        # 初始化权重
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+    
     def forward(self, input_seq):
-        seq_mask = (input_seq == self.config.pad_token)  # (batch_size, seq_len)
-        positions = torch.arange(input_seq.size(1), dtype=torch.long, device=input_seq.device)
-        positions = positions.unsqueeze(0).expand_as(input_seq)
-
-        item_embs = self.item_emb(input_seq)
-        pos_embs = self.pos_emb(positions)
-        seq_embs = item_embs + pos_embs
-        seq_embs = self.dropout(seq_embs)
-
-        # 注意力 mask（上三角，防止未来信息泄露）
-        attn_mask = self._get_attention_mask(input_seq.size(1)).to(input_seq.device)
-
-        out = seq_embs
+        # input_seq: [batch_size, seq_len]
+        batch_size, seq_len = input_seq.size()
+        device = input_seq.device
+        
+        # 创建位置id
+        pos_ids = torch.arange(seq_len, dtype=torch.long, device=device)
+        pos_ids = pos_ids.unsqueeze(0).expand_as(input_seq)
+        
+        # 创建attention mask (避免关注padding和未来位置)
+        attention_mask = self.get_attention_mask(input_seq)
+        
+        # 嵌入层 + 位置编码
+        item_embeddings = self.item_emb(input_seq)
+        pos_embeddings = self.positional_emb(pos_ids)
+        seqs = item_embeddings + pos_embeddings
+        
+        # Dropout & Layer Norm
+        seqs = self.emb_dropout(seqs)
+        seqs = self.layernorm(seqs)
+        
+        # 传递每个Transformer块
         for block in self.transformer_blocks:
-            out = block(out, src_mask=attn_mask, src_key_padding_mask=seq_mask)
+            seqs = block(seqs, attention_mask)
+            
+        # 返回最终的序列表示
+        return seqs
+    
+    def get_attention_mask(self, input_seq):
+        """
+        创建attention mask矩阵，用于:
+        1. 避免关注padding位置
+        2. 实现因果注意力 (Causal Attention)：每个位置只能关注自己和之前的位置
+        """
+        batch_size, seq_len = input_seq.size()
+        device = input_seq.device
+        
+        # Padding mask: 将padding位置设为True (会被masked out)
+        pad_mask = (input_seq == self.pad_token)  # [batch_size, seq_len]
+        
+        # 扩展padding mask: [batch_size, 1, 1, seq_len]
+        pad_mask = pad_mask.unsqueeze(1).unsqueeze(2)
+        
+        # 因果注意力掩码(确保每个位置只看到过去的信息)
+        # 创建一个上三角矩阵(对角线以上为True)
+        subsequent_mask = torch.triu(
+            torch.ones((seq_len, seq_len), device=device), diagonal=1
+        )
+        subsequent_mask = (subsequent_mask == 1)  # 转换为布尔型
+        
+        # 扩展到所有batch: [1, 1, seq_len, seq_len]
+        subsequent_mask = subsequent_mask.unsqueeze(0).unsqueeze(0)
+        
+        # 合并两个掩码: [batch_size, 1, seq_len, seq_len]
+        # 只要其中一个为True，就masked out
+        attention_mask = pad_mask.expand(-1, -1, seq_len, -1) | subsequent_mask
+        
+        return attention_mask
 
-        out = self.layer_norm(out)
-        return out  # (batch_size, seq_len, embedding_dim)
 
-    def _get_attention_mask(self, seq_len):
-        # 生成上三角 mask，屏蔽未来 token
-        mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-        return mask  # (seq_len, seq_len), 注意：会被广播到 (B, N, N) 如果使用 attn_mask
+class TransformerBlock(nn.Module):
+    def __init__(self, hidden_size, num_heads, dropout_rate):
+        super(TransformerBlock, self).__init__()
+        self.attention = MultiHeadAttention(hidden_size, num_heads, dropout_rate)
+        self.feed_forward = PointWiseFeedForward(hidden_size, dropout_rate)
+        self.layernorm1 = nn.LayerNorm(hidden_size)
+        self.layernorm2 = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout_rate)
+        
+    def forward(self, x, attention_mask=None):
+        # Self-Attention
+        attention_output = self.attention(x, x, x, attention_mask)
+        # 残差连接和Layer Normalization
+        x = self.layernorm1(x + self.dropout(attention_output))
+        # Feed Forward Network
+        ffn_output = self.feed_forward(x)
+        # 残差连接和Layer Normalization
+        x = self.layernorm2(x + self.dropout(ffn_output))
+        return x
+
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, hidden_size, num_heads, dropout_rate):
+        super(MultiHeadAttention, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_size = hidden_size // num_heads
+        assert self.head_size * num_heads == hidden_size, "hidden_size必须能被num_heads整除"
+        
+        # Query, Key, Value投影矩阵
+        self.q_linear = nn.Linear(hidden_size, hidden_size)
+        self.k_linear = nn.Linear(hidden_size, hidden_size)
+        self.v_linear = nn.Linear(hidden_size, hidden_size)
+        
+        # 输出投影
+        self.out_proj = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(dropout_rate)
+        
+    def transpose_for_scores(self, x):
+        # x: [batch_size, seq_len, hidden_size]
+        batch_size, seq_len = x.size(0), x.size(1)
+        # 重塑和转置: [batch_size, seq_len, num_heads, head_size] -> [batch_size, num_heads, seq_len, head_size]
+        x = x.view(batch_size, seq_len, self.num_heads, self.head_size)
+        return x.permute(0, 2, 1, 3)
+        
+    def forward(self, query, key, value, attention_mask=None):
+        batch_size = query.size(0)
+        
+        # 线性投影
+        q = self.q_linear(query)  # [batch_size, seq_len, hidden_size]
+        k = self.k_linear(key)
+        v = self.v_linear(value)
+        
+        # 重塑以进行多头注意力
+        q = self.transpose_for_scores(q)  # [batch_size, num_heads, seq_len, head_size]
+        k = self.transpose_for_scores(k)
+        v = self.transpose_for_scores(v)
+        
+        # 缩放点积注意力
+        # q * k^T / sqrt(head_size)
+        attention_scores = torch.matmul(q, k.transpose(-1, -2))  # [batch_size, num_heads, seq_len, seq_len]
+        attention_scores = attention_scores / (self.head_size ** 0.5)
+        
+        # 应用注意力掩码(如果有)
+        if attention_mask is not None:
+            # 将mask中为True的位置设置为一个非常小的值，这样在softmax后接近于0
+            attention_scores = attention_scores.masked_fill(attention_mask, -1e9)
+        
+        # Softmax归一化权重
+        attention_probs = torch.softmax(attention_scores, dim=-1)  # [batch_size, num_heads, seq_len, seq_len]
+        attention_probs = self.dropout(attention_probs)
+        
+        # 加权求和
+        context_layer = torch.matmul(attention_probs, v)  # [batch_size, num_heads, seq_len, head_size]
+        
+        # 转置回原始形状
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()  # [batch_size, seq_len, num_heads, head_size]
+        context_layer = context_layer.view(batch_size, -1, self.hidden_size)  # [batch_size, seq_len, hidden_size]
+        
+        # 输出投影
+        output = self.out_proj(context_layer)
+        
+        return output
+
+
+class PointWiseFeedForward(nn.Module):
+    def __init__(self, hidden_size, dropout_rate):
+        super(PointWiseFeedForward, self).__init__()
+        self.linear1 = nn.Linear(hidden_size, hidden_size * 4)
+        self.dropout = nn.Dropout(dropout_rate)
+        self.linear2 = nn.Linear(hidden_size * 4, hidden_size)
+        self.activation = nn.GELU()
+        
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+        x = self.linear2(x)
+        return x
+
 
 # BPR Loss实现
 class SequenceLoss(nn.Module):
@@ -200,7 +315,7 @@ def load_data(dir_path):
     # 确保item_hist是列表形式
     for df in [train_df, val_df, test_df]:
         if not isinstance(df['item_hist'].iloc[0], list):
-            df['item_hist'] = df['item_hist'].to_list()
+            df['item_hist'] = df['item_hist'].apply(list)
     
     return train_df, val_df, test_df
 
