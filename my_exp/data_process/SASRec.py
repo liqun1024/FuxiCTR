@@ -12,7 +12,7 @@ import random
 class Config:
     def __init__(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.batch_size = 1024
+        self.batch_size = 512
         self.embedding_dim = 64
         self.max_seq_length = 201  # 最大序列长度
         self.num_heads = 2
@@ -22,6 +22,7 @@ class Config:
         self.num_epochs = 10
         self.item_vocab_size = 5000000  # 根据你的数据调整
         self.pad_token = 0
+        self.eval_per_step = 100
 
 config = Config()
 
@@ -40,7 +41,7 @@ class SASRecDataset(Dataset):
         row = self.data.iloc[idx]
         
         # 将target_item作为序列最后一个元素
-        full_seq = row['item_hist'] + [row['target_item']]
+        full_seq = row['item_hist'].tolist() + [row['target_item']]
         full_seq = full_seq[-self.max_len:]  # 截断
         
         # 输入序列（去掉最后一个元素）
@@ -53,8 +54,8 @@ class SASRecDataset(Dataset):
         # 填充短序列
         if seq_len < self.max_len:
             pad_len = self.max_len - seq_len
-            input_seq = [self.pad_token] * pad_len + input_seq
-            target_seq = [self.pad_token] * pad_len + target_seq
+            input_seq = [self.pad_token] * pad_len + list(input_seq)
+            target_seq = [self.pad_token] * pad_len + list(target_seq)
         
         # 转换为tensor
         input_seq = torch.LongTensor(input_seq)
@@ -65,49 +66,92 @@ class SASRecDataset(Dataset):
         
         return input_seq, target_seq, mask
 
-# SASRec模型（改为序列预测）
+class PreNormTransformerBlock(nn.Module):
+    def __init__(self, config):
+        super(PreNormTransformerBlock, self).__init__()
+        embed_dim = config.embedding_dim
+        num_heads = config.num_heads
+        ff_dim = config.ffn_dim if hasattr(config, 'ffn_dim') else embed_dim * 4
+        dropout = config.dropout_rate
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim, num_heads, dropout=dropout, batch_first=True
+        )
+        self.ffn = nn.Sequential(
+            nn.Linear(embed_dim, ff_dim),
+            nn.GELU(),
+            nn.Linear(ff_dim, embed_dim),
+            nn.Dropout(dropout)
+        )
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, src_mask=None, src_key_padding_mask=None):
+        # PreNorm: x + f(LN(x))
+        # Attention block
+        residual1 = x
+        x = self.norm1(x)
+        attn_out, _ = self.attention(
+            query=x,
+            key=x,
+            value=x,
+            attn_mask=src_mask,
+            key_padding_mask=src_key_padding_mask,
+            need_weights=False
+        )
+        x = residual1 + self.dropout(attn_out)
+
+        # FFN block
+        residual2 = x
+        x = self.norm2(x)
+        ffn_out = self.ffn(x)
+        x = residual2 + self.dropout(ffn_out)
+
+        return x
+
+
 class SASRecModel(nn.Module):
     def __init__(self, config):
         super(SASRecModel, self).__init__()
         self.config = config
         self.item_emb = nn.Embedding(
-            config.item_vocab_size, 
-            config.embedding_dim, 
+            config.item_vocab_size,
+            config.embedding_dim,
             padding_idx=config.pad_token
         )
         self.pos_emb = nn.Embedding(config.max_seq_length, config.embedding_dim)
-        self.attention_layers = nn.ModuleList([
-            nn.TransformerEncoderLayer(
-                d_model=config.embedding_dim,
-                nhead=config.num_heads,
-                dropout=config.dropout_rate,
-                batch_first=True
-            ) for _ in range(config.num_blocks)
+        # 使用自定义的 PreNorm Block
+        self.transformer_blocks = nn.ModuleList([
+            PreNormTransformerBlock(config) for _ in range(config.num_blocks)
         ])
         self.layer_norm = nn.LayerNorm(config.embedding_dim)
         self.dropout = nn.Dropout(config.dropout_rate)
-        # self.output_layer = nn.Linear(config.embedding_dim, config.item_vocab_size) # 移除
 
     def forward(self, input_seq):
-        seq_mask = (input_seq == self.config.pad_token)
+        seq_mask = (input_seq == self.config.pad_token)  # (batch_size, seq_len)
         positions = torch.arange(input_seq.size(1), dtype=torch.long, device=input_seq.device)
         positions = positions.unsqueeze(0).expand_as(input_seq)
+
         item_embs = self.item_emb(input_seq)
         pos_embs = self.pos_emb(positions)
         seq_embs = item_embs + pos_embs
         seq_embs = self.dropout(seq_embs)
-        attention_mask = self._get_attention_mask(input_seq)
-        out = seq_embs
-        for layer in self.attention_layers:
-            out = layer(out, src_key_padding_mask=seq_mask, mask=attention_mask)
-        out = self.layer_norm(out)
-        # 只输出序列embedding (batch_size, seq_len, embedding_dim)
-        return out
 
-    def _get_attention_mask(self, input_seq):
-        batch_size, seq_len = input_seq.size()
+        # 注意力 mask（上三角，防止未来信息泄露）
+        attn_mask = self._get_attention_mask(input_seq.size(1)).to(input_seq.device)
+
+        out = seq_embs
+        for block in self.transformer_blocks:
+            out = block(out, src_mask=attn_mask, src_key_padding_mask=seq_mask)
+
+        out = self.layer_norm(out)
+        return out  # (batch_size, seq_len, embedding_dim)
+
+    def _get_attention_mask(self, seq_len):
+        # 生成上三角 mask，屏蔽未来 token
         mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-        return mask.to(input_seq.device)
+        return mask  # (seq_len, seq_len), 注意：会被广播到 (B, N, N) 如果使用 attn_mask
 
 # BPR Loss实现
 class SequenceLoss(nn.Module):
@@ -148,22 +192,42 @@ class SequenceLoss(nn.Module):
         return masked_loss.sum() / mask.sum()
 
 # 加载数据
-def load_data():
-    train_df = pd.read_parquet('train.parquet')
-    val_df = pd.read_parquet('val.parquet')
-    test_df = pd.read_parquet('test.parquet')
+def load_data(dir_path):
+    train_df = pd.read_parquet(f'{dir_path}/train.parquet')
+    val_df = pd.read_parquet(f'{dir_path}/valid.parquet')
+    test_df = pd.read_parquet(f'{dir_path}/test.parquet')
     
     # 确保item_hist是列表形式
     for df in [train_df, val_df, test_df]:
         if not isinstance(df['item_hist'].iloc[0], list):
-            df['item_hist'] = df['item_hist'].apply(eval)
+            df['item_hist'] = df['item_hist'].to_list()
     
     return train_df, val_df, test_df
+
+
+def eval_model(model, val_loader, criterion, train_loss, cnt):        
+    # 验证
+    model.eval()
+    val_loss = 0
+    with torch.no_grad():
+        for batch in val_loader:
+            input_seq, target_seq, mask = [x.to(config.device) for x in batch]
+            seq_embs = model(input_seq)
+            loss = criterion(seq_embs, target_seq, mask, model.item_emb)
+            val_loss += loss.item()
+    
+    avg_train_loss = train_loss / config.eval_per_step
+    avg_val_loss = val_loss / len(val_loader)
+    print(f'Step {cnt+1}: Train Loss = {avg_train_loss:.4f}, Val Loss = {avg_val_loss:.4f}')
+
+    model.train()
+    return avg_val_loss
 
 # 训练函数
 def train_model():
     # 加载数据
-    train_df, val_df, test_df = load_data()
+    dir_path = '/home/liqun03/FuxiCTR/my_datasets/taobao' 
+    train_df, val_df, test_df = load_data(dir_path)
     
     # 创建数据集和数据加载器
     train_dataset = SASRecDataset(train_df, config)
@@ -182,13 +246,15 @@ def train_model():
         embedding_dim=config.embedding_dim
     )
     optimizer = optim.Adam(model.parameters(), lr=config.lr)
-    
-    # 训练循环
+
     best_val_loss = float('inf')
+    # 训练循环
     for epoch in range(config.num_epochs):
         model.train()
         train_loss = 0
+        cnt = 0
         for batch in tqdm(train_loader, desc=f'Epoch {epoch+1}'):
+            cnt += 1
             input_seq, target_seq, mask = [x.to(config.device) for x in batch]
             optimizer.zero_grad()
             seq_embs = model(input_seq)
@@ -196,25 +262,14 @@ def train_model():
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
-        
-        # 验证
-        model.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for batch in val_loader:
-                input_seq, target_seq, mask = [x.to(config.device) for x in batch]
-                seq_embs = model(input_seq)
-                loss = criterion(seq_embs, target_seq, mask, model.item_emb)
-                val_loss += loss.item()
-        
-        avg_train_loss = train_loss / len(train_loader)
-        avg_val_loss = val_loss / len(val_loader)
-        print(f'Epoch {epoch+1}: Train Loss = {avg_train_loss:.4f}, Val Loss = {avg_val_loss:.4f}')
-        
-        # 保存最佳模型
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), 'sasrec_seq_best_model.pth')
+            print(loss.item())
+            if cnt % config.eval_per_step == 0:
+                avg_val_loss = eval_model(model, val_loader, criterion, train_loss, cnt)
+                # 保存最佳模型
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    torch.save(model.state_dict(), 'sasrec_seq_best_model.pth')
+                train_loss = 0
     
     # 测试
     model.load_state_dict(torch.load('sasrec_seq_best_model.pth'))

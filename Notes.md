@@ -4,6 +4,10 @@ demo/exp6: \
 对于特征是seq的部分，二维dict，其他是一维dict。
 
 ---
+# taobao
+item编号: 1-4162024
+
+---
 # MovieLens-1M数据处理
 使用ml-1m数据，将其处理成npz格式数据，保存user item以及cross的特征。\
 其中，首先过滤掉用户交互不足60的，剩余的，在超过50的部分划分7:2:1作为train val和test。
