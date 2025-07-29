@@ -6,6 +6,8 @@ demo/exp6: \
 ---
 # taobao
 item编号: 1-4162024
+使用DIN训练的Embedding由于没有正负样本的对比loss，因此相似性更高，在进行tokenizer的时候几乎存在40%的item撞id（设置codesize=1024，layer=3，同时强制均匀聚类max_points_per_centroid也不可以）
+改为使用SASRec获得embedding。设置codesize=512，并均匀聚类，有1/7的冲突，仍然不够好。
 
 ---
 # MovieLens-1M数据处理
@@ -22,4 +24,3 @@ train valid test分别有507186，143849，76118条数据。
 
 **Note**:潜在的问题是，在测试集，用户序列不是最新的（即测试集的部分没有被训练，作为流式数据不知道会不会有问题。
 这样过滤是否存在穿越问题？ 即按照每条用户自己的时间，但是训练集每条用户的截止时间不相同。
-

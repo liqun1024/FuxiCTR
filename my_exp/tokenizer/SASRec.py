@@ -16,11 +16,12 @@ class Config:
         self.num_heads = 2
         self.num_blocks = 2  # transformer block数量
         self.dropout_rate = 0.1
-        self.lr = 0.001
+        self.lr = 0.0005
         self.num_epochs = 10
         self.item_vocab_size = 5000000  # 根据你的数据调整
         self.pad_token = 0
         self.eval_per_step = 100
+        self.num_negatives = 100
 
 config = Config()
 
@@ -39,7 +40,7 @@ class SASRecDataset(Dataset):
         row = self.data.iloc[idx]
         
         # 将target_item作为序列最后一个元素
-        full_seq = row['item_hist'].tolist() + [row['target_item']]
+        full_seq = row['item_hist'] + [row['target_item']]
         full_seq = full_seq[-self.max_len:]  # 截断
         
         # 输入序列（去掉最后一个元素）
@@ -270,41 +271,72 @@ class PointWiseFeedForward(nn.Module):
 
 # BPR Loss实现
 class SequenceLoss(nn.Module):
+    """
+    BPR Loss 的实现，并在评估时计算 NDCG 指标。
+    """
     def __init__(self, num_negatives=100, item_vocab_size=5000000, embedding_dim=64):
         super(SequenceLoss, self).__init__()
         self.num_negatives = num_negatives
         self.item_vocab_size = item_vocab_size
         self.embedding_dim = embedding_dim
 
-    def forward(self, seq_embs, target_seq, mask, item_emb_layer):
+    def forward(self, seq_embs, target_seq, mask, item_emb_layer, eval=False):
         # seq_embs: (batch_size, seq_len, embedding_dim)
         # target_seq: (batch_size, seq_len)
         # mask: (batch_size, seq_len)
+        # item_emb_layer: 模型的物品嵌入层
+
         batch_size, seq_len = target_seq.size()
         device = seq_embs.device
 
-        # 正样本embedding
+        # 正样本 embedding 和得分
         pos_emb = item_emb_layer(target_seq)  # (batch_size, seq_len, embedding_dim)
+        pos_score = (seq_embs * pos_emb).sum(-1)  # (batch_size, seq_len)
 
-        # 负样本采样
+        # 负样本采样、embedding 和得分
         neg_items = torch.randint(
             1, self.item_vocab_size, 
             (batch_size, seq_len, self.num_negatives), 
             device=device
         )
         neg_emb = item_emb_layer(neg_items)  # (batch_size, seq_len, num_negatives, embedding_dim)
+        
+        # 使用 unsqueeze 和广播机制计算所有负样本得分
+        neg_score = (seq_embs.unsqueeze(2) * neg_emb).sum(-1)  # (batch_size, seq_len, num_negatives)
 
-        # 扩展seq_embs用于与负样本做内积
-        seq_embs_exp = seq_embs.unsqueeze(2)  # (batch_size, seq_len, 1, embedding_dim)
-        pos_score = (seq_embs * pos_emb).sum(-1)  # (batch_size, seq_len)
-        neg_score = (seq_embs_exp * neg_emb).sum(-1)  # (batch_size, seq_len, num_negatives)
+        # BPR loss: -log(sigmoid(pos_score - neg_score))
+        # 扩展 pos_score 以匹配 neg_score 的维度
+        diff = pos_score.unsqueeze(-1) - neg_score
+        bpr_loss = -torch.log(torch.sigmoid(diff) + 1e-8)
+        
+        # 应用 mask
+        mask_bpr = mask.unsqueeze(-1).expand_as(bpr_loss)
+        masked_loss = bpr_loss * mask_bpr
+        loss = masked_loss.sum() / mask_bpr.sum()
 
-        # BPR loss: log(sigmoid(pos_score - neg_score))
-        bpr_loss = -torch.log(torch.sigmoid(pos_score.unsqueeze(-1) - neg_score) + 1e-8)  # (batch_size, seq_len, num_negatives)
-        # mask扩展
-        mask = mask.unsqueeze(-1).expand_as(bpr_loss)
-        masked_loss = bpr_loss * mask
-        return masked_loss.sum() / mask.sum()
+        # 如果不是评估模式，只返回 loss
+        if not eval:
+            return loss
+        
+        # === NDCG 计算 (仅在 eval=True 时执行) ===
+        # 计算正样本的排名 (0-indexed)
+        # rank = 比正样本得分更高的负样本数量
+        rank = (neg_score > pos_score.unsqueeze(-1)).sum(dim=-1).float()
+
+        # 计算 NDCG@1
+        # 如果 rank < 1 (即排名第一)，则为 1.0，否则为 0.0
+        ndcg1 = (rank < 1).float()
+        
+        # 计算 NDCG@5
+        # 如果 rank < 5，NDCG@5 = 1 / log2(rank + 2)，否则为 0.0
+        in_top5 = (rank < 5).float()
+        ndcg5 = in_top5 * (1 / torch.log2(rank + 2))
+
+        # 应用 mask 并计算批次的平均 NDCG
+        avg_ndcg1 = (ndcg1 * mask).sum() / mask.sum()
+        avg_ndcg5 = (ndcg5 * mask).sum() / mask.sum()
+        
+        return loss, avg_ndcg1, avg_ndcg5
 
 # 加载数据
 def load_data(dir_path):
@@ -321,19 +353,37 @@ def load_data(dir_path):
 
 
 def eval_model(model, val_loader, criterion, train_loss, cnt):        
-    # 验证
+    """
+    评估模型在验证集上的表现。
+    """
     model.eval()
     val_loss = 0
+    total_ndcg1 = 0
+    total_ndcg5 = 0
+    
     with torch.no_grad():
         for batch in val_loader:
             input_seq, target_seq, mask = [x.to(config.device) for x in batch]
             seq_embs = model(input_seq)
-            loss = criterion(seq_embs, target_seq, mask, model.item_emb)
+            
+            # 在评估模式下，criterion 返回 loss, ndcg1, ndcg5
+            loss, ndcg1, ndcg5 = criterion(seq_embs, target_seq, mask, model.item_emb, eval=True)
+            
             val_loss += loss.item()
+            total_ndcg1 += ndcg1.item()
+            total_ndcg5 += ndcg5.item()
     
+    # 计算所有验证批次的平均指标
+    num_batches = len(val_loader)
     avg_train_loss = train_loss / config.eval_per_step
-    avg_val_loss = val_loss / len(val_loader)
-    print(f'Step {cnt+1}: Train Loss = {avg_train_loss:.4f}, Val Loss = {avg_val_loss:.4f}')
+    avg_val_loss = val_loss / num_batches
+    avg_ndcg1 = total_ndcg1 / num_batches
+    avg_ndcg5 = total_ndcg5 / num_batches
+
+    print(
+        f'Step {cnt+1}: Train Loss = {avg_train_loss:.4f}, Val Loss = {avg_val_loss:.4f}, '
+        f'NDCG@1 = {avg_ndcg1:.4f}, NDCG@5 = {avg_ndcg5:.4f}'
+    )
 
     model.train()
     return avg_val_loss
@@ -356,7 +406,7 @@ def train_model():
     # 初始化模型
     model = SASRecModel(config).to(config.device)
     criterion = SequenceLoss(
-        num_negatives=100, 
+        num_negatives=config.num_negatives, 
         item_vocab_size=config.item_vocab_size, 
         embedding_dim=config.embedding_dim
     )
@@ -377,7 +427,7 @@ def train_model():
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
-            print(loss.item())
+            # print(loss.item())
             if cnt % config.eval_per_step == 0:
                 avg_val_loss = eval_model(model, val_loader, criterion, train_loss, cnt)
                 # 保存最佳模型

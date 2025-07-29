@@ -152,16 +152,16 @@ def residual_kmeans_tokenizer(embeddings: np.ndarray,
 
 
 if __name__ == '__main__':
-    model_path = "/home/liqun03/FuxiCTR/my_exp/base/checkpoints/taobao/DIN_Long.model"
+    model_path = "/home/liqun03/FuxiCTR/sasrec_item_embeddings.npy"
     save_path = "/home/liqun03/FuxiCTR/my_datasets/taobao/item_tokens.parquet"
-    max_id = 4162024
+    MAX_ID = 4162024
+    N_CLUSTERS = 1024
     # 1. 处理Embedding数据
-    model_dict = torch.load(model_path, map_location='cpu')
-    item_embeddings = model_dict['embedding_layer.embedding_layer.embedding_layers.target_item.weight'][1:max_id + 1, :]
-    item_embeddings = item_embeddings.numpy()
+    item_embeddings = np.load(model_path)
+    item_embeddings = item_embeddings[1:MAX_ID + 1, :]
 
     # 2. 运行tokenizer
-    final_tokens_df = residual_kmeans_tokenizer(item_embeddings, n_clusters=1024, n_layers=3)
+    final_tokens_df = residual_kmeans_tokenizer(item_embeddings, n_clusters=N_CLUSTERS, n_layers=3)
 
     # 3. 验证输出
     print("\n--- Verification ---")
@@ -172,8 +172,8 @@ if __name__ == '__main__':
     for col in ['token_1', 'token_2', 'token_3']:
         min_val, max_val = final_tokens_df[col].min(), final_tokens_df[col].max()
         print(f"'{col}' range: [{min_val}, {max_val}]")
-        assert 1 <= min_val <= 512
-        assert 1 <= max_val <= 512
+        assert 1 <= min_val <= N_CLUSTERS
+        assert 1 <= max_val <= N_CLUSTERS
 
     print("\nFinal collision check:")
     num_duplicates = final_tokens_df.duplicated(subset=['token_1', 'token_2', 'token_3']).sum()
