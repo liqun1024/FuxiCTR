@@ -142,8 +142,11 @@ class GenRec(T5ForConditionalGeneration):
 
         if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
             decoder_input_ids = self._shift_right(labels)
-        
+
+        pad = torch.full((decoder_input_ids.size(0), 1), 0, dtype=decoder_input_ids.dtype, device=decoder_input_ids.device)
+        decoder_input_ids = torch.cat([decoder_input_ids, pad], dim=1)
         decoder_inputs_embeds = self.get_embeddings(decoder_input_ids, use_last_embedding=True)
+        decoder_inputs_embeds = decoder_inputs_embeds[:, :-1, :]
 
         decoder_outputs = self.decoder(
             inputs_embeds=decoder_inputs_embeds,
