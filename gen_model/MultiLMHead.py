@@ -318,5 +318,6 @@ if __name__ == '__main__':
         generated_ids = model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            max_length=15
+            max_length=8
         )
+    print(f"Generated IDs: {generated_ids}")
