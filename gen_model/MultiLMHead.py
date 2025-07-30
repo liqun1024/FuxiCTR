@@ -140,11 +140,12 @@ class GenRec(T5ForConditionalGeneration):
 
         hidden_states = encoder_outputs[0]
 
-        if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
-            decoder_input_ids = self._shift_right(labels)
-
-        pad = torch.full((decoder_input_ids.size(0), 1), 0, dtype=decoder_input_ids.dtype, device=decoder_input_ids.device)
-        decoder_input_ids = torch.cat([decoder_input_ids, pad], dim=1)
+        decoder_start_token = torch.full(
+            (labels.size(0), 1), 
+            self.config.decoder_start_token_id, 
+            dtype=labels.dtype, device=labels.device
+        )
+        decoder_input_ids = torch.cat([decoder_start_token, labels], dim=1)
         decoder_inputs_embeds = self.get_embeddings(decoder_input_ids, use_last_embedding=True)
         decoder_inputs_embeds = decoder_inputs_embeds[:, :-1, :]
 
@@ -204,7 +205,6 @@ class GenRec(T5ForConditionalGeneration):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         max_length: int = 20,
-        eos_token_id: int = None,
         **kwargs,
     ):
         """
@@ -218,9 +218,6 @@ class GenRec(T5ForConditionalGeneration):
                 Mask to avoid performing attention on padding token indices.
             max_length (`int`, *optional*, defaults to 20):
                 The maximum length of the sequence to be generated.
-            eos_token_id (`int`, *optional*):
-                The id of the end-of-sequence token. If not provided, generation will
-                continue until `max_length` is reached.
         
         Returns:
             `torch.Tensor` of shape `(batch_size, sequence_length)`:
@@ -289,7 +286,7 @@ if __name__ == '__main__':
         d_ff=model_dim * 2,
         num_layers=2,
         num_heads=4,
-        decoder_start_token_id=0,
+        decoder_start_token_id=-2,
         pad_token_id=-100
     )
 
@@ -300,7 +297,7 @@ if __name__ == '__main__':
     )
 
 
-    input_ids = torch.tensor([[1, 2, 3, -1, 3, 5, 7, 1, 5, 4, -2], [1, 4, 2, -1, 3, 6, 2, 5, 4, 2, -2]], dtype=torch.long)
+    input_ids = torch.tensor([[3, 5, 7, 1, 5, 4, -1, 1, 2, 3], [3, 6, 2, 5, 4, 2, -1, 1, 4, 2,]], dtype=torch.long)
     labels = torch.tensor([[1, 2, 3, 34, 3, 5, 7, 25], [1, 4, 2, 33, 3, 6, 2, 52]], dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
 
