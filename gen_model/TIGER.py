@@ -21,7 +21,7 @@ def sigmoid(x):
     return 1 / (1 + torch.exp(-x))
 
 
-class LETTER(T5ForConditionalGeneration):
+class GenRec(T5ForConditionalGeneration):
 
     def __init__(self, config: T5Config):
         super().__init__(config)
@@ -96,7 +96,7 @@ class LETTER(T5ForConditionalGeneration):
                 attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
             )
 
-        hidden_states = encoder_outputs[0]
+        hidden_states = encoder_outputs[0] # (batch_size, sequence_length, model_dim)
 
         if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
             decoder_input_ids = self._shift_right(labels)
