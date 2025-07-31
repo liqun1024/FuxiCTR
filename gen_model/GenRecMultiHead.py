@@ -27,15 +27,22 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         )
 
         self.loss_temperature = loss_temperature
-
-        if self.config.tie_word_embeddings:
-            print("WARNING: tie_word_embeddings is not supported with Multi LM heads. Disabling.")
-            self.config.tie_word_embeddings = False
-            
+        
         self.lm_heads = nn.ModuleList(
             [nn.Linear(config.d_model, vocab_size, bias=False) for vocab_size in token_level_vocab_sizes]
         )
         self.lm_head = None
+
+
+        self.level_offsets = [0] * len(token_level_vocab_sizes)
+        cumulative_offset = special_vocab_size
+        for i, size in enumerate(token_level_vocab_sizes):
+            self.level_offsets[i] = cumulative_offset
+            cumulative_offset += size
+
+        if self.config.tie_word_embeddings:
+            print("WARNING: tie_word_embeddings is not supported with Multi LM heads. Disabling.")
+            self.config.tie_word_embeddings = False
 
     def ranking_loss(self, lm_logits, labels):
         if labels is not None:
@@ -45,6 +52,7 @@ class GenRecMultiHead(T5ForConditionalGeneration):
 
             for i in range(token_levels):
                 head_labels = labels[:, i::token_levels]
+                head_labels = head_labels - self.level_offsets[i]  # Adjust labels to match the token level offset
                 logits = lm_logits[i::token_levels]
                 if logits is not None and head_labels.numel() > 0:
                     head_logits = torch.stack(logits, dim=1)  # [batch, seq, vocab_size]
@@ -80,7 +88,6 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        **kwargs,
     ):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -200,12 +207,6 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         past_key_values = None
 
         token_levels = len(self.token_level_vocab_sizes)
-        level_offsets = [0] * len(token_level_vocab_sizes)
-        cumulative_offset = special_vocab_size
-        for i, size in enumerate(token_level_vocab_sizes):
-            level_offsets[i] = cumulative_offset
-            cumulative_offset += size
-
         for step in range(max_length - 1):
             token_level_idx = step % token_levels
 
@@ -225,7 +226,7 @@ class GenRecMultiHead(T5ForConditionalGeneration):
             
             next_token_logits = logits.squeeze(1) # (batch_size, vocab_size)
             next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1) # (batch_size, 1)
-            next_token_id = level_offsets[token_level_idx] + next_token_id
+            next_token_id = self.level_offsets[token_level_idx] + next_token_id
 
             generated_ids = torch.cat([generated_ids, next_token_id], dim=1)
 
@@ -259,7 +260,7 @@ if __name__ == '__main__':
     )
 
     # token i of item: special_vocab_size + sum(token_level_vocab_sizes[:i]) + idx
-    input_ids = torch.tensor([[13, 25, 37, 17, 25, 34, -1, 11, 22, 33], [13, 26, 32, 15, 24, 32, -1, 11, 24, 32]], dtype=torch.long)
+    input_ids = torch.tensor([[13, 25, 37, 17, 25, 34, 0, 11, 22, 33], [13, 26, 32, 15, 24, 32, 0, 11, 24, 32]], dtype=torch.long)
     labels = torch.tensor([[11, 22, 33, 78, 13, 25, 37, 90], [12, 24, 32, 69, 13, 22, 32, 52]], dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
 
