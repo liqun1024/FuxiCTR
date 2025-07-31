@@ -202,7 +202,7 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         )
         decoder_inputs_embeds = self.embeddings(decoder_start_ids)  # (batch_size, 1, d_model)
 
-        generated_ids = torch.new_empty((batch_size, 0), dtype=torch.long, device=device)
+        generated_ids = torch.empty((batch_size, 0), dtype=torch.long, device=device)
 
         past_key_values = None
 
