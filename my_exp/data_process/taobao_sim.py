@@ -31,6 +31,9 @@ if __name__ == "__main__":
     INPUT_DIR = "/home/liqun03/FuxiCTR/my_datasets/taobao"
     OUTPUT_DIR = "/home/liqun03/FuxiCTR/my_datasets/taobao_sim"
 
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+
     for split in ['train', 'valid', 'test']:
         df = pd.read_parquet(os.path.join(INPUT_DIR, f'{split}.parquet'))
         item_embeddings = np.load(os.path.join(INPUT_DIR, 'item_embeddings.npy'))
