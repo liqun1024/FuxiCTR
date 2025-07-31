@@ -5,7 +5,7 @@ from transformers import T5ForConditionalGeneration, T5Config
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput
 
 
-class GenRec(T5ForConditionalGeneration):
+class GenRecMultiHead(T5ForConditionalGeneration):
     """
     GenRec model for ranking tasks, extending T5ForConditionalGeneration.
     Supports multiple LM heads for different vocab sizes.
@@ -13,16 +13,16 @@ class GenRec(T5ForConditionalGeneration):
     """
 
     def __init__(self, 
-                 lm_heads_vocab_sizes: list[int], 
+                 token_level_vocab_sizes: list[int], 
                  special_vocab_size: int = 10,
                  loss_temperature: float = 1.0,
                  config: T5Config = None):
         super().__init__(config)
-        self.lm_heads_vocab_sizes = lm_heads_vocab_sizes
+        self.token_level_vocab_sizes = token_level_vocab_sizes
         self.special_vocab_size = special_vocab_size
 
         self.embeddings = nn.Embedding(
-            special_vocab_size + sum(lm_heads_vocab_sizes), 
+            special_vocab_size + sum(token_level_vocab_sizes), 
             config.d_model
         )
 
@@ -33,7 +33,7 @@ class GenRec(T5ForConditionalGeneration):
             self.config.tie_word_embeddings = False
             
         self.lm_heads = nn.ModuleList(
-            [nn.Linear(config.d_model, vocab_size, bias=False) for vocab_size in lm_heads_vocab_sizes]
+            [nn.Linear(config.d_model, vocab_size, bias=False) for vocab_size in token_level_vocab_sizes]
         )
         self.lm_head = None
 
@@ -41,11 +41,11 @@ class GenRec(T5ForConditionalGeneration):
         if labels is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             losses = []
-            num_heads = len(self.lm_heads)
+            token_levels = len(self.token_level_vocab_sizes)
 
-            for i in range(num_heads):
-                head_labels = labels[:, i::num_heads]
-                logits = lm_logits[i::num_heads]
+            for i in range(token_levels):
+                head_labels = labels[:, i::token_levels]
+                logits = lm_logits[i::token_levels]
                 if logits is not None and head_labels.numel() > 0:
                     head_logits = torch.stack(logits, dim=1)  # [batch, seq, vocab_size]
                     t_logits = head_logits / self.loss_temperature
@@ -120,15 +120,15 @@ class GenRec(T5ForConditionalGeneration):
         sequence_output = decoder_outputs[0] # (batch_size, sequence_length, model_dim)
 
         sequence_len = sequence_output.size(1)
-        num_heads = len(self.lm_heads)
+        token_levels = len(self.token_level_vocab_sizes)
         all_logits = [None] * sequence_len
 
-        for i in range(num_heads):
-            sub_sequence_hidden_states = sequence_output[:, i::num_heads, :]
+        for i in range(token_levels):
+            sub_sequence_hidden_states = sequence_output[:, i::token_levels, :]
 
             if sub_sequence_hidden_states.size(1) > 0:
                 sub_sequence_logits = self.lm_heads[i](sub_sequence_hidden_states)
-                for j, original_idx in enumerate(range(i, sequence_len, num_heads)):
+                for j, original_idx in enumerate(range(i, sequence_len, token_levels)):
                     all_logits[original_idx] = sub_sequence_logits[:, j, :]
 
         lm_logits = all_logits # (sequence_length, batch_size, vocab_size)
@@ -198,9 +198,16 @@ class GenRec(T5ForConditionalGeneration):
 
         decoder_inputs_embeds = self.embeddings(generated_ids)  # (batch_size, 1, d_model)
         past_key_values = None
-        num_heads = len(self.lm_heads)
+
+        token_levels = len(self.token_level_vocab_sizes)
+        level_offsets = [0] * len(token_level_vocab_sizes)
+        cumulative_offset = special_vocab_size
+        for i, size in enumerate(token_level_vocab_sizes):
+            level_offsets[i] = cumulative_offset
+            cumulative_offset += size
+
         for step in range(max_length - 1):
-            current_head_idx = step % num_heads
+            token_level_idx = step % token_levels
 
             decoder_outputs = self.decoder(
                 inputs_embeds=decoder_inputs_embeds,
@@ -213,13 +220,13 @@ class GenRec(T5ForConditionalGeneration):
             
             last_hidden_state = decoder_outputs.last_hidden_state # (batch_size, 1, d_model)
             
-            lm_head = self.lm_heads[current_head_idx]
+            lm_head = self.lm_heads[token_level_idx]
             logits = lm_head(last_hidden_state) # (batch_size, 1, vocab_size)
             
             next_token_logits = logits.squeeze(1) # (batch_size, vocab_size)
             next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1) # (batch_size, 1)
-            next_token_id = self.special_vocab_size + sum(self.lm_heads_vocab_sizes[:current_head_idx]) + next_token_id
-            
+            next_token_id = level_offsets[token_level_idx] + next_token_id
+
             generated_ids = torch.cat([generated_ids, next_token_id], dim=1)
 
             decoder_inputs_embeds = self.embeddings(next_token_id) # (batch_size, 1, d_model)
@@ -229,29 +236,29 @@ class GenRec(T5ForConditionalGeneration):
 
 
 if __name__ == '__main__':
-    lm_heads_vocab_sizes = [10, 10, 10, 100]
-    num_heads = len(lm_heads_vocab_sizes)
+    token_level_vocab_sizes = [10, 10, 10, 100]
+    token_levels = len(token_level_vocab_sizes)
     special_vocab_size = 10
     model_dim = 128
 
     config = T5Config(
-        vocab_size=max(lm_heads_vocab_sizes), 
+        vocab_size=0, 
         d_model=model_dim,
         d_kv=model_dim // 2,
         d_ff=model_dim * 2,
         num_layers=2,
-        num_heads=4,
+        token_levels=4,
         decoder_start_token_id=1,
         pad_token_id=-100
     )
 
-    model = GenRec(
+    model = GenRecMultiHead(
         config=config,
-        lm_heads_vocab_sizes=lm_heads_vocab_sizes,
+        token_level_vocab_sizes=token_level_vocab_sizes,
         special_vocab_size=special_vocab_size
     )
 
-    # token i of item: special_vocab_size + sum(lm_heads_vocab_sizes[:i]) + idx
+    # token i of item: special_vocab_size + sum(token_level_vocab_sizes[:i]) + idx
     input_ids = torch.tensor([[13, 25, 37, 17, 25, 34, -1, 11, 22, 33], [13, 26, 32, 15, 24, 32, -1, 11, 24, 32]], dtype=torch.long)
     labels = torch.tensor([[11, 22, 33, 78, 13, 25, 37, 90], [12, 24, 32, 69, 13, 22, 32, 52]], dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
