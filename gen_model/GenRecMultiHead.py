@@ -207,7 +207,7 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         past_key_values = None
 
         token_levels = len(self.token_level_vocab_sizes)
-        for step in range(max_length - 1):
+        for step in range(max_length):
             token_level_idx = step % token_levels
 
             decoder_outputs = self.decoder(
