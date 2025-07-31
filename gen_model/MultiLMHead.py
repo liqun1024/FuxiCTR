@@ -13,15 +13,18 @@ class GenRec(T5ForConditionalGeneration):
     """
 
     def __init__(self, 
-                 lm_heads_vocab_sizes, special_vocab_size=10,
-                 loss_temperature=1.0,
+                 lm_heads_vocab_sizes: list[int], 
+                 special_vocab_size: int = 10,
+                 loss_temperature: float = 1.0,
                  config: T5Config = None):
         super().__init__(config)
+        self.lm_heads_vocab_sizes = lm_heads_vocab_sizes
+        self.special_vocab_size = special_vocab_size
 
-        self.embeddings = nn.ModuleList(
-            [nn.Embedding(vocab_size, config.d_model) for vocab_size in lm_heads_vocab_sizes]
+        self.embeddings = nn.Embedding(
+            special_vocab_size + sum(lm_heads_vocab_sizes), 
+            config.d_model
         )
-        self.special_embedding = nn.Embedding(special_vocab_size, config.d_model)
 
         self.loss_temperature = loss_temperature
 
@@ -59,50 +62,6 @@ class GenRec(T5ForConditionalGeneration):
         loss = self.ranking_loss(lm_logits, labels)
         return loss
 
-    def get_embeddings(self, input_ids, use_last_embedding):
-        """
-        Get embeddings for the input_ids using the appropriate embedding layer.
-        This method handles special tokens separately and groups only the regular tokens.
-        """
-        batch_size, seq_len = input_ids.shape
-        device = input_ids.device
-        inputs_embeds = torch.zeros(batch_size, seq_len, self.config.d_model, device=device)
-
-        # Special tokens handling
-        special_mask = input_ids < 0
-        if special_mask.any():
-            special_ids = input_ids[special_mask]
-            special_embed_idx = (-special_ids - 1).long()
-            special_embeds = self.special_embedding(special_embed_idx)
-            inputs_embeds[special_mask] = special_embeds
-
-        # Group regular tokens
-        regular_mask = ~special_mask
-        regular_batch_indices, regular_seq_indices = torch.where(regular_mask)
-        regular_ids = input_ids[regular_mask]
-
-        if regular_ids.numel() == 0:
-            return inputs_embeds
-        
-        if use_last_embedding:
-            num_groups = len(self.embeddings)  # Use all embeddings including the last one
-        else:
-            num_groups = len(self.embeddings) - 1  # Exclude the last embedding which is for the decoder
-
-        group_assignments = torch.arange(regular_ids.numel(), device=device) % num_groups
-        all_regular_embeds = torch.zeros(regular_ids.numel(), self.config.d_model, device=device)
-        for i in range(num_groups):
-            mask_i = (group_assignments == i)
-            if not mask_i.any():
-                continue
-            ids_i = regular_ids[mask_i]
-            embeds_i = self.embeddings[i](ids_i)
-            all_regular_embeds[mask_i] = embeds_i
-
-        inputs_embeds[regular_batch_indices, regular_seq_indices] = all_regular_embeds
-
-        return inputs_embeds
-
     def forward(
         self,
         input_ids=None, 
@@ -126,7 +85,7 @@ class GenRec(T5ForConditionalGeneration):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        inputs_embeds = self.get_embeddings(input_ids, use_last_embedding=False)
+        inputs_embeds = self.embeddings(input_ids)
 
         if encoder_outputs is None:
             encoder_outputs = self.encoder(
@@ -140,14 +99,9 @@ class GenRec(T5ForConditionalGeneration):
 
         hidden_states = encoder_outputs[0]
 
-        decoder_start_token = torch.full(
-            (labels.size(0), 1), 
-            self.config.decoder_start_token_id, 
-            dtype=labels.dtype, device=labels.device
-        )
-        decoder_input_ids = torch.cat([decoder_start_token, labels], dim=1)
-        decoder_inputs_embeds = self.get_embeddings(decoder_input_ids, use_last_embedding=True)
-        decoder_inputs_embeds = decoder_inputs_embeds[:, :-1, :]
+        if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
+            decoder_input_ids = self._shift_right(labels)
+        decoder_inputs_embeds = self.embeddings(decoder_input_ids)
 
         decoder_outputs = self.decoder(
             inputs_embeds=decoder_inputs_embeds,
@@ -228,7 +182,7 @@ class GenRec(T5ForConditionalGeneration):
         batch_size = input_ids.shape[0]
         device = input_ids.device
 
-        inputs_embeds = self.get_embeddings(input_ids, use_last_embedding=False)
+        inputs_embeds = self.embeddings(input_ids)  # (batch_size, sequence_length, d_model)
 
         encoder_outputs = self.encoder(
             inputs_embeds=inputs_embeds,
@@ -242,7 +196,7 @@ class GenRec(T5ForConditionalGeneration):
             (batch_size, 1), decoder_start_token_id, dtype=torch.long, device=device
         )
 
-        decoder_inputs_embeds = self.get_embeddings(generated_ids, use_last_embedding=True)
+        decoder_inputs_embeds = self.embeddings(generated_ids)  # (batch_size, 1, d_model)
         past_key_values = None
         num_heads = len(self.lm_heads)
         for step in range(max_length - 1):
@@ -264,10 +218,11 @@ class GenRec(T5ForConditionalGeneration):
             
             next_token_logits = logits.squeeze(1) # (batch_size, vocab_size)
             next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1) # (batch_size, 1)
+            next_token_id = self.special_vocab_size + sum(self.lm_heads_vocab_sizes[:current_head_idx]) + next_token_id
             
             generated_ids = torch.cat([generated_ids, next_token_id], dim=1)
 
-            decoder_inputs_embeds = self.embeddings[current_head_idx](next_token_id) # (batch_size, 1, d_model)
+            decoder_inputs_embeds = self.embeddings(next_token_id) # (batch_size, 1, d_model)
             past_key_values = decoder_outputs.past_key_values
 
         return generated_ids
@@ -286,7 +241,7 @@ if __name__ == '__main__':
         d_ff=model_dim * 2,
         num_layers=2,
         num_heads=4,
-        decoder_start_token_id=-2,
+        decoder_start_token_id=1,
         pad_token_id=-100
     )
 
@@ -296,9 +251,9 @@ if __name__ == '__main__':
         special_vocab_size=special_vocab_size
     )
 
-
-    input_ids = torch.tensor([[3, 5, 7, 1, 5, 4, -1, 1, 2, 3], [3, 6, 2, 5, 4, 2, -1, 1, 4, 2,]], dtype=torch.long)
-    labels = torch.tensor([[1, 2, 3, 34, 3, 5, 7, 25], [1, 4, 2, 33, 3, 6, 2, 52]], dtype=torch.long)
+    # token i of item: special_vocab_size + sum(lm_heads_vocab_sizes[:i]) + idx
+    input_ids = torch.tensor([[13, 25, 37, 17, 25, 34, -1, 11, 22, 33], [13, 26, 32, 15, 24, 32, -1, 11, 24, 32]], dtype=torch.long)
+    labels = torch.tensor([[11, 22, 33, 78, 13, 25, 37, 90], [12, 24, 32, 69, 13, 22, 32, 52]], dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
 
     print(f"Input IDs shape: {input_ids.shape}")
