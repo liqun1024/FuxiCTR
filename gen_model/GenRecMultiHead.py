@@ -165,8 +165,7 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        max_length: int = 20,
-        **kwargs,
+        max_length: int = 20
     ):
         """
         Generates token sequences autoregressively for the GenRec model.
@@ -198,12 +197,13 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         )
         encoder_hidden_states = encoder_outputs.last_hidden_state
 
-        decoder_start_token_id = self.config.decoder_start_token_id
-        generated_ids = torch.full(
-            (batch_size, 1), decoder_start_token_id, dtype=torch.long, device=device
+        decoder_start_ids = torch.full(
+            (batch_size, 1), self.config.decoder_start_token_id, dtype=torch.long, device=device
         )
+        decoder_inputs_embeds = self.embeddings(decoder_start_ids)  # (batch_size, 1, d_model)
 
-        decoder_inputs_embeds = self.embeddings(generated_ids)  # (batch_size, 1, d_model)
+        generated_ids = torch.new_empty((batch_size, 0), dtype=torch.long, device=device)
+
         past_key_values = None
 
         token_levels = len(self.token_level_vocab_sizes)
@@ -243,14 +243,13 @@ if __name__ == '__main__':
     model_dim = 128
 
     config = T5Config(
-        vocab_size=0, 
+        vocab_size=1, 
         d_model=model_dim,
         d_kv=model_dim // 2,
         d_ff=model_dim * 2,
         num_layers=2,
         token_levels=4,
-        decoder_start_token_id=1,
-        pad_token_id=-100
+        decoder_start_token_id=1
     )
 
     model = GenRecMultiHead(
