@@ -139,10 +139,6 @@ def residual_kmeans_tokenizer(embeddings: np.ndarray,
 
     # --- 最后处理与保存 ---
     print("\nFinalizing and saving the results...")
-    
-    # 1 index
-    for col in ['token_1', 'token_2', 'token_3']:
-        df[col] = df[col] + 1
         
     # 保存为parquet文件
     df.to_parquet(output_filename, index=False)
@@ -152,6 +148,8 @@ def residual_kmeans_tokenizer(embeddings: np.ndarray,
 
 
 if __name__ == '__main__':
+    # 这里item和token的ID都是从0开始的
+
     model_path = "/home/liqun03/FuxiCTR/sasrec_item_embeddings.npy"
     save_path = "/home/liqun03/FuxiCTR/my_datasets/taobao/item_tokens.parquet"
     MAX_ID = 4162024
