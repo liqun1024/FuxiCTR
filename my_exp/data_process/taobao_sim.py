@@ -34,9 +34,9 @@ if __name__ == "__main__":
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
+    item_embeddings = np.load("/home/liqun03/FuxiCTR/checkpoints/sasrec_item_embeddings.npy")
     for split in ['train', 'valid', 'test']:
         df = pd.read_parquet(os.path.join(INPUT_DIR, f'{split}.parquet'))
-        item_embeddings = np.load(os.path.join(INPUT_DIR, 'item_embeddings.npy'))
 
         results_df = df.apply(
             find_top_k_similar_items,

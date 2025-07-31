@@ -4,6 +4,11 @@ demo/exp6: \
 对于特征是seq的部分，二维dict，其他是一维dict。
 
 ---
+# GenRec
+注意，之前组织数据集的时候，按照0是padding，大于1开始才是item。
+从生成式模型开始，固定使用item从0开始编号，同时对于输入的数据，不固定具体的长度，使用tokenizer实现padding。
+
+---
 # taobao
 item编号: 1-4162024
 使用DIN训练的Embedding由于没有正负样本的对比loss，因此相似性更高，在进行tokenizer的时候几乎存在40%的item撞id（设置codesize=1024，layer=3，同时强制均匀聚类max_points_per_centroid也不可以）

@@ -140,7 +140,7 @@ def residual_kmeans_tokenizer(embeddings: np.ndarray,
     # --- 最后处理与保存 ---
     print("\nFinalizing and saving the results...")
     
-    # 将token从 0-511 映射到 1-512
+    # 1 index
     for col in ['token_1', 'token_2', 'token_3']:
         df[col] = df[col] + 1
         
