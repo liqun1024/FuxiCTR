@@ -133,6 +133,7 @@ class GenRecTokenizer:
         return result
 
 if __name__ == "__main__":
+    import os
     mock_data = {
         'item_id': [101, 102, 103, 104],
         'token_0': [0, 1, 0, 2],
@@ -154,6 +155,8 @@ if __name__ == "__main__":
     print(f"Level offsets: {tokenizer.level_offsets}\n")
 
     input = [[-1, 103, 101, -2]] # -1 -> 0, -2 -> 1
-    output2 = tokenizer(input, padding=None, return_tensors='pt')
+    output = tokenizer(input, padding=None, return_tensors='pt')
     print(f"Input: {input}")
-    print(f"Output 'input_ids':\n{output2['input_ids']}")
+    print(f"Output 'input_ids':\n{output['input_ids']}")
+
+    os.remove(mock_file_path)  # Clean up mock file after testing
