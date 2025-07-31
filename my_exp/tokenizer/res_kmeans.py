@@ -148,7 +148,8 @@ def residual_kmeans_tokenizer(embeddings: np.ndarray,
 
 
 if __name__ == '__main__':
-    # 这里item和token的ID都是从0开始的
+    # 默认这里输入的embedding是从1开始编号的，
+    # 生成的item和token的ID都是从0开始编号。
 
     model_path = "/home/liqun03/FuxiCTR/sasrec_item_embeddings.npy"
     save_path = "/home/liqun03/FuxiCTR/my_datasets/taobao/item_tokens.parquet"
