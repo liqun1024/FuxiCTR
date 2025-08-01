@@ -1,10 +1,10 @@
 # dataset.py
 import torch
 import pandas as pd
-from torch.utils.data import Dataset
-from typing import List, Dict, Any
-
-import config # Import configuration
+import numpy as np
+from torch.utils.data import Dataset, DataLoader
+from typing import List, Dict
+from GenRecTokenizer import GenRecTokenizer
 
 
 class ParquetDataset(Dataset):
@@ -12,46 +12,110 @@ class ParquetDataset(Dataset):
     Custom Dataset for reading data from a Parquet file.
     """
     def __init__(self, file_path: str):
-        # For large files, consider using pyarrow to read row by row
-        # instead of loading the whole file into memory with pandas.
         self.data = pd.read_parquet(file_path)
 
     def __len__(self) -> int:
         return len(self.data)
 
     def __getitem__(self, idx: int) -> Dict[str, List[int]]:
-        """
-        !!! IMPORTANT !!!
-        This is the method you need to implement based on your data format.
-        It should return a dictionary containing two lists of integers:
-        - 'input_seq': The input sequence for the encoder.
-        - 'target_seq': The target sequence for the decoder.
-        """
-        # --- YOUR LOGIC HERE ---
-        # Example implementation:
         row = self.data.iloc[idx]
-        # Assuming your parquet file has columns 'input_seq' and 'target_seq'
-        # which store lists of integers.
         input_seq = row['input_seq']
-        target_seq = row['target_seq']
-        
+        input_seq.extend([-1, row['target_item']])  # Append -1 and target item to input sequence
+
+        target_seq = row['top_20_items']
+        target_sim = row['top_20_sims']
+        target_sim = [int(i * 10000) for i in target_sim]  # Convert similarity to integer
+
         return {
             "input_seq": input_seq,
             "target_seq": target_seq,
+            "target_sim": target_sim
         }
 
-def collate_fn(batch: List[Dict[str, List[int]]], tokenizer: YourTokenizer) -> Dict[str, torch.Tensor]:
-    """
-    Collates a batch of data points into a single batch tensor.
-    """
-    input_sequences = [item['input_seq'] for item in batch]
-    target_sequences = [item['target_seq'] for item in batch]
+class SimDataLoader(DataLoader):
+    def __init__(self, data_path, tokenizer, batch_size=32, shuffle=False, num_workers=1):
+        self.batch_size = batch_size
+        self.dataset = ParquetDataset(data_path)
+        
+        super().__init__(
+            dataset=self.dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            collate_fn=BatchCollator(tokenizer)
+        )
+        self.num_samples = len(self.dataset)
+        self.num_blocks = 1
+        self.num_batches = int(np.ceil(self.num_samples / self.batch_size))
 
-    encoder_inputs = tokenizer(input_sequences)
-    labels = tokenizer(target_sequences)["input_ids"]
-    
-    return {
-        "input_ids": encoder_inputs["input_ids"],
-        "attention_mask": encoder_inputs["attention_mask"],
-        "labels": labels,
-    }
+    def __len__(self):
+        return self.num_batches
+
+class BatchCollator:
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+
+    def __call__(self, batch: List[Dict[str, List[int]]]) -> Dict[str, torch.Tensor]:
+        input_sequences = [item['input_seq'] for item in batch]
+        target_sequences = [item['target_seq'] for item in batch]
+        target_similarities = [item['target_sim'] for item in batch]
+
+        encoder_inputs = self.tokenizer(input_sequences)
+        labels = self.tokenizer(target_sequences, target_similarities)["input_ids"]
+
+        return {
+            "input_ids": encoder_inputs["input_ids"],
+            "attention_mask": encoder_inputs["attention_mask"],
+            "labels": labels,
+        }
+
+class TaobaoSimDataLoader(object):
+    def __init__(self, stage="both", 
+                 train_data=None, valid_data=None, test_data=None,
+                 map_file_path=None, token_level_vocab_sizes=None,
+                 special_vocab_size=None, batch_size=32):
+        print("Loading datasets...")
+        train_gen = None
+        valid_gen = None
+        test_gen = None
+        self.stage = stage
+        
+        tokenizer = GenRecTokenizer(
+            map_file_path=map_file_path,
+            token_level_vocab_sizes=token_level_vocab_sizes,
+            special_vocab_size=special_vocab_size
+        )
+
+        if stage in ["both", "train"]:
+            train_gen = SimDataLoader(train_data, tokenizer, batch_size=batch_size, shuffle=True)
+            print(
+                "Train samples: total/{:d}, blocks/{:d}"
+                .format(train_gen.num_samples, train_gen.num_blocks)
+            )     
+            if valid_data:
+                valid_gen = SimDataLoader(valid_data, tokenizer, batch_size=batch_size)
+                print(
+                    "Validation samples: total/{:d}, blocks/{:d}"
+                    .format(valid_gen.num_samples, valid_gen.num_blocks)
+                )
+
+        if stage in ["both", "test"]:
+            if test_data:
+                test_gen = SimDataLoader(test_data, tokenizer, batch_size=batch_size)
+                print(
+                    "Test samples: total/{:d}, blocks/{:d}"
+                    .format(test_gen.num_samples, test_gen.num_blocks)
+                )
+
+        self.train_gen, self.valid_gen, self.test_gen = train_gen, valid_gen, test_gen
+
+    def make_iterator(self):
+        if self.stage == "train":
+            print("Loading train and validation data done.")
+            return self.train_gen, self.valid_gen
+        elif self.stage == "test":
+            print("Loading test data done.")
+            return self.test_gen
+        else:
+            print("Loading data done.")
+            return self.train_gen, self.valid_gen, self.test_gen

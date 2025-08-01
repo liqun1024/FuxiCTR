@@ -9,15 +9,14 @@ class Trainer:
     """
     A class to encapsulate the training and evaluation loop.
     """
-    def __init__(self, model, train_loader, eval_loader, device):
+    def __init__(self, model, train_loader, eval_loader, optimizer=None, device=None):
         self.model = model.to(device)
         self.train_loader = train_loader
         self.eval_loader = eval_loader
         self.device = device
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=config.LEARNING_RATE)
+        self.optimizer = optimizer if optimizer else optim.AdamW(self.model.parameters(), lr=config.LEARNING_RATE)
 
     def _train_epoch(self, epoch: int):
-        """Helper function to run a single training epoch."""
         self.model.train()
         total_loss = 0
         progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader), desc=f"Epoch {epoch+1}/{config.NUM_EPOCHS}")
@@ -45,7 +44,6 @@ class Trainer:
                 progress_bar.set_postfix({"training_loss": f"{total_loss / (i + 1):.4f}"})
 
     def evaluate(self) -> float:
-        """Run evaluation on the validation set."""
         self.model.eval()
         total_loss = 0
         with torch.no_grad():
@@ -78,5 +76,9 @@ class Trainer:
             os.makedirs(config.OUTPUT_DIR)
         
         path = os.path.join(config.OUTPUT_DIR, f"model_epoch_{epoch+1}.pth")
-        torch.save(self.model.state_dict(), path)
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'epoch': epoch,
+        }, path)
         print(f"Checkpoint saved to {path}")

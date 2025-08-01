@@ -1,13 +1,13 @@
-# config.py
 import torch
 
 # -- File Paths --
-TRAIN_DATA_PATH = "data/dummy_data.parquet"
-EVAL_DATA_PATH = "data/dummy_data.parquet" # Use the same for simplicity, change if you have a separate eval set
-OUTPUT_DIR = "checkpoints"
+TRAIN_DATA_PATH = "/home/liqun03/FuxiCTR/my_datasets/taobao_sim_zero_based/train_with_similarity.parquet"
+VAL_DATA_PATH = "/home/liqun03/FuxiCTR/my_datasets/taobao_sim_zero_based/valid_with_similarity.parquet" 
+TEST_DATA_PATH = "/home/liqun03/FuxiCTR/my_datasets/taobao_sim_zero_based/test_with_similarity.parquet"
+OUTPUT_DIR = "/home/liqun03/FuxiCTR/checkpoints/GenRec"
 
 # -- Model Configuration --
-TOKEN_LEVEL_VOCAB_SIZES = [10, 10, 10, 100]
+TOKEN_LEVEL_VOCAB_SIZES = [1024, 1024, 1024, 10001]
 SPECIAL_VOCAB_SIZE = 10
 MODEL_DIM = 128
 NUM_LAYERS = 2
@@ -16,10 +16,11 @@ LOSS_TEMPERATURE = 1.0
 
 # -- Tokenizer Configuration --
 PAD_TOKEN_ID = -100
+TOKENIZER_MAP_FILE = "/home/liqun03/FuxiCTR/checkpoints/item_tokens_zero_based.parquet"
 
 # -- Training Configuration --
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 8
+DEVICE = "cuda"
+BATCH_SIZE = 128
 NUM_EPOCHS = 10
 LEARNING_RATE = 1e-4
 LOG_INTERVAL = 10 # Log training loss every N steps

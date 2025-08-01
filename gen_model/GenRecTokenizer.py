@@ -58,8 +58,9 @@ class GenRecTokenizer:
         token_map = df[token_cols].apply(lambda row: row.tolist(), axis=1).to_dict()
         return token_map
 
-    def encode(self, item_list: List[int]) -> List[int]:
+    def encode(self, item_list: List[int], sim_list: List[int] = None) -> List[int]:
         input_ids = []
+        sim_idx = 0
         for item_id in item_list:
             if -self.special_vocab_size <= item_id <= -1:
                 token = -item_id - 1  # Convert special token ID to zero-based index
@@ -69,14 +70,21 @@ class GenRecTokenizer:
                 if tokens is not None:
                     encoded_tokens = [self.level_offsets[i] + token for i, token in enumerate(tokens)]
                     input_ids.extend(encoded_tokens)
+                    if sim_list is not None and sim_idx < len(sim_list):
+                        input_ids.append(sim_list[sim_idx] + self.level_offsets[-1])  # Append similarity value
+                        sim_idx += 1
                 else:
                     raise ValueError(f"Item ID {item_id} not found in the token map.")
         
+        assert sim_idx == len(sim_list) if sim_list is not None else True, \
+            "Mismatch between number of items and similarity values."
+
         return input_ids
 
     def __call__(
             self, 
             batch_items: List[List[int]],
+            batch_items_sim: List[List[int]] = None,
             padding: str = 'longest',
             truncation: str = 'left',
             max_length: int = None,
@@ -84,8 +92,10 @@ class GenRecTokenizer:
     ) -> Dict[str, Union[List[List[int]], 'torch.Tensor']]:
         if not batch_items or not isinstance(batch_items[0], list):
             batch_items = [batch_items]
-        
-        tokenized_sequences = [self.encode(item_list) for item_list in batch_items]
+        if batch_items_sim is not None and not isinstance(batch_items_sim[0], list):
+            batch_items_sim = [batch_items_sim]
+
+        tokenized_sequences = [self.encode(item_list, sim_list) for item_list, sim_list in zip(batch_items, batch_items_sim)]
 
         if truncation and max_length is not None:
             for i in range(len(tokenized_sequences)):
@@ -98,7 +108,7 @@ class GenRecTokenizer:
         batch_input_ids = []
         if padding:
             if padding == 'longest':
-                target_len = max(len(seq) for seq in batch_input_ids)
+                target_len = max(len(seq) for seq in tokenized_sequences)
             elif padding == 'max_length':
                 if max_length is None:
                     raise ValueError("`max_length` must be specified for `padding='max_length'`.")
@@ -108,7 +118,7 @@ class GenRecTokenizer:
 
             for seq in tokenized_sequences:
                 diff = target_len - len(seq)
-                if diff > 0:
+                if diff >= 0:
                     padded_seq = seq + [self.pad_token_id] * diff
                     batch_input_ids.append(padded_seq)
                 else:
