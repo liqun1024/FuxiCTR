@@ -49,10 +49,10 @@ if __name__ == "__main__":
         )
 
         final_df = pd.concat([df, results_df], axis=1)
-        final_df = final_df[['user_id', 'target_item', 'item_hist', 'top_20_items', 'top_20_sims']]
+        final_df = final_df[['uid', 'target_item', 'item_hist', 'top_20_items', 'top_20_sims']]
 
         # Adjusting indices to be zero-based
-        final_df['user_id'] = final_df['user_id'] - 1
+        final_df['uid'] = final_df['uid'] - 1
         final_df['target_item'] = final_df['target_item'] - 1
         final_df['item_hist'] = final_df['item_hist'].apply(lambda x: [i - 1 for i in x])
         final_df['top_20_items'] = final_df['top_20_items'].apply(lambda x: [i - 1 for i in x])
