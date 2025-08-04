@@ -7,7 +7,7 @@ TEST_DATA_PATH = "/home/liqun03/FuxiCTR/my_datasets/taobao_sim_zero_based/test_w
 OUTPUT_DIR = "/home/liqun03/FuxiCTR/checkpoints/GenRec"
 
 # -- Model Configuration --
-TOKEN_LEVEL_VOCAB_SIZES = [1024, 1024, 1024, 10001]
+TOKEN_LEVEL_VOCAB_SIZES = [1024, 1024, 1024, 10000]
 SPECIAL_VOCAB_SIZE = 10
 MODEL_DIM = 128
 NUM_LAYERS = 2

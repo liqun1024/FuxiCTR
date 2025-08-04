@@ -46,13 +46,14 @@ class GenRecMultiHead(T5ForConditionalGeneration):
 
     def ranking_loss(self, lm_logits, labels):
         if labels is not None:
-            loss_fct = CrossEntropyLoss(ignore_index=0)
+            loss_fct = CrossEntropyLoss(ignore_index=-100)
             losses = []
             token_levels = len(self.token_level_vocab_sizes)
 
             for i in range(token_levels):
-                head_labels = labels[:, i::token_levels]
-                head_labels = head_labels - self.level_offsets[i]  # Adjust labels to match the token level offset
+                head_labels = labels[:, i::token_levels].clone()
+                head_labels[head_labels == 0] = -100
+                head_labels[head_labels != -100] -= self.level_offsets[i] # Adjust labels to match the token level offset
                 logits = lm_logits[i::token_levels]
                 if logits is not None and head_labels.numel() > 0:
                     head_logits = torch.stack(logits, dim=1)  # [batch, seq, vocab_size]

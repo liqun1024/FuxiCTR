@@ -25,7 +25,7 @@ class ParquetDataset(Dataset):
         self.data['input_seq'] = final_input_seq_list
 
         self.data['top_20_sims'] = self.data['top_20_sims'].apply(
-            lambda sims: [(int(i * 10000) + 10000) / 2 for i in sims] # [-1, 1] -> [0, 10000]
+            lambda sims: [int((i + 1) * 4999) for i in sims] # [-1, 1] -> [0, 9999]
         )
 
     def __len__(self) -> int:

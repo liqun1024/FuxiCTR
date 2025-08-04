@@ -7,6 +7,7 @@ demo/exp6: \
 # GenRec
 注意，之前组织数据集的时候，按照0是padding，大于1开始才是item。
 从生成式模型开始，固定使用item从0开始编号，同时对于输入的数据，不固定具体的长度，使用tokenizer实现padding。
+SEP_TOKEN: 0-padding, 1-history和target之间的间隔token, 2-decoder的start token
 
 ---
 # taobao
