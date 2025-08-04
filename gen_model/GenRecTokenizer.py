@@ -82,11 +82,12 @@ class GenRecTokenizer:
         return input_ids
 
     def __call__(
-            self, 
+            self,
             batch_items: List[List[int]],
             batch_items_sim: List[List[int]] = None,
             padding: str = 'longest',
             truncation: str = 'left',
+            padding_side: str = 'right',
             max_length: int = None,
             return_tensors: str = 'pt',
     ) -> Dict[str, Union[List[List[int]], 'torch.Tensor']]:
@@ -107,7 +108,7 @@ class GenRecTokenizer:
                         tokenized_sequences[i] = tokenized_sequences[i][-max_length:]
                     else:
                         tokenized_sequences[i] = tokenized_sequences[i][:max_length]
-        
+
         batch_input_ids = []
         if padding:
             if padding == 'longest':
@@ -122,7 +123,12 @@ class GenRecTokenizer:
             for seq in tokenized_sequences:
                 diff = target_len - len(seq)
                 if diff >= 0:
-                    padded_seq = seq + [self.pad_token_id] * diff
+                    if padding_side == 'right':
+                        padded_seq = seq + [self.pad_token_id] * diff
+                    elif padding_side == 'left':
+                        padded_seq = [self.pad_token_id] * diff + seq
+                    else:
+                        raise ValueError(f"Invalid padding_side: {padding_side}. Choose 'left' or 'right'.")
                     batch_input_ids.append(padded_seq)
                 else:
                     raise ValueError(f"Tokenized sequence length {len(seq)} exceeds target length {target_len}.")
@@ -142,7 +148,7 @@ class GenRecTokenizer:
         if return_tensors == 'pt':
             result["input_ids"] = torch.tensor(result["input_ids"], dtype=torch.long)
             result["attention_mask"] = torch.tensor(result["attention_mask"], dtype=torch.long)
-        
+
         return result
 
 if __name__ == "__main__":
