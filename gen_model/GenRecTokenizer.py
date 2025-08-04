@@ -54,7 +54,9 @@ class GenRecTokenizer:
             [col for col in df.columns if col.startswith(self.token_col_prefix)], 
             key=lambda x: int(x.split('_')[1])
         )
-        
+        assert len(token_cols) + 1 == len(self.token_level_vocab_sizes), \
+            "Mismatch between token columns and token level vocab sizes."
+
         token_map = df[token_cols].apply(lambda row: row.tolist(), axis=1).to_dict()
         return token_map
 

@@ -16,10 +16,12 @@ class GenRecMultiHead(T5ForConditionalGeneration):
                  token_level_vocab_sizes: list[int], 
                  special_vocab_size: int = 10,
                  loss_temperature: float = 1.0,
+                 pad_token_id: int = 0,
                  config: T5Config = None):
         super().__init__(config)
         self.token_level_vocab_sizes = token_level_vocab_sizes
         self.special_vocab_size = special_vocab_size
+        self.pad_token_id = pad_token_id
 
         self.embeddings = nn.Embedding(
             special_vocab_size + sum(token_level_vocab_sizes), 
@@ -52,7 +54,7 @@ class GenRecMultiHead(T5ForConditionalGeneration):
 
             for i in range(token_levels):
                 head_labels = labels[:, i::token_levels].clone()
-                head_labels[head_labels == 0] = -100
+                head_labels[head_labels == self.pad_token_id] = -100
                 head_labels[head_labels != -100] -= self.level_offsets[i] # Adjust labels to match the token level offset
                 logits = lm_logits[i::token_levels]
                 if logits is not None and head_labels.numel() > 0:
@@ -145,13 +147,27 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         if labels is not None:
             loss = self.total_loss(lm_logits, labels)
 
+        # padding the logits to match the maximum vocab size for outputs
+        max_vocab_size = max(self.token_level_vocab_sizes)
+        batch_size = sequence_output.size(0)
+        logits = torch.full(
+            (batch_size, sequence_len, max_vocab_size),
+            fill_value=-1e9,
+            device=sequence_output.device,
+            dtype=sequence_output.dtype
+        )
+        for idx, logit in enumerate(lm_logits):
+            if logit is not None:
+                vocab_size = logit.size(-1)
+                logits[:, idx, :vocab_size] = logit
+
         if not return_dict:
-            output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
+            output = (logits,) + decoder_outputs[1:] + encoder_outputs
             return ((loss,) + output) if loss is not None else output
 
         return Seq2SeqLMOutput(
             loss=loss,
-            logits=None,
+            logits=logits,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,
             decoder_attentions=decoder_outputs.attentions,

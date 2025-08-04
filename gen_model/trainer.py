@@ -42,10 +42,43 @@ class Trainer:
             # Update progress bar
             if (i + 1) % config.LOG_INTERVAL == 0:
                 progress_bar.set_postfix({"training_loss": f"{total_loss / (i + 1):.4f}"})
+    
+    def _init_metrics(self):
+        self.metrics = {}
+        token_levels = len(self.token_level_vocab_sizes)
+        for i in range(token_levels):
+            self.metrics[f"level_{i}_accuracy"] = 0
+        self.metrics[f"total"] = 0
+        self.metrics["item_accuracy"] = 0
+
+    def _update_metrics(self, predictions, labels):
+        token_levels = len(self.token_level_vocab_sizes)
+        valid_mask = labels != self.model.pad_token_id
+        self.metrics["total"] += valid_mask.sum().item() / token_levels
+
+        for i in range(token_levels):
+            level_predictions = predictions[:, i::token_levels]
+            level_labels = labels[:, i::token_levels]
+            level_mask = valid_mask[:, i::token_levels]
+            self.metrics[f"level_{i}_accuracy"] += ((level_predictions == level_labels) & level_mask).sum().item()
+
+        batch_size = labels.size(0)
+        labels_item = labels.view(batch_size, -1, token_levels)
+        predictions_item = predictions.view(batch_size, -1, token_levels)
+        valid_item_mask = torch.all(labels_item != self.model.pad_token_id, dim=-1)
+        correct_items_mask = torch.all(
+            predictions_item[:, :, :token_levels - 1] == labels_item[:, :, :token_levels - 1],
+            dim=2
+        )
+        correct_and_valid_items = (correct_items_mask & valid_item_mask).sum().item()
+        self.metrics["item_accuracy"] += correct_and_valid_items
+
+        return self.metrics
 
     def evaluate(self) -> float:
         self.model.eval()
         total_loss = 0
+        self._init_metrics()
         with torch.no_grad():
             for batch in tqdm(self.eval_loader, desc="Evaluating"):
                 input_ids = batch["input_ids"].to(self.device)
@@ -60,8 +93,18 @@ class Trainer:
                 loss = outputs.loss
                 total_loss += loss.item()
 
+                predictions = outputs.logits.argmax(dim=-1)
+                self._update_metrics(predictions, labels)
+
         avg_loss = total_loss / len(self.eval_loader)
         print(f"\nEvaluation Loss: {avg_loss:.4f}")
+        
+        print(f"\nEvaluation Metrics:\n")
+        for key, value in self.metrics.items():
+            if "accuracy" in key:
+                value /= self.metrics["total"]
+            print(f"{key}: {value:.4f}\t")
+
         return avg_loss
 
     def train(self):
