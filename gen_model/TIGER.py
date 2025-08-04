@@ -34,7 +34,7 @@ class GenRec(T5ForConditionalGeneration):
     def ranking_loss(self, lm_logits, labels):
         if labels is not None:
             t_logits = lm_logits/self.temperature
-            loss_fct = CrossEntropyLoss(ignore_index=-100)
+            loss_fct = CrossEntropyLoss(ignore_index=0)
             # move labels to correct device to enable PP
             labels = labels.to(lm_logits.device)
             loss = loss_fct(t_logits.view(-1, t_logits.size(-1)), labels.view(-1))

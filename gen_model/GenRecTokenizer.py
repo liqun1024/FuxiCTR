@@ -14,7 +14,7 @@ class GenRecTokenizer:
                  map_file_path: str, 
                  token_level_vocab_sizes: List[int], 
                  special_vocab_size: int = 10,
-                 pad_token_id: int = -100,
+                 pad_token_id: int = 0,
                  item_id_col: str = 'item_id',
                  token_col_prefix: str = 'token_'):
         """
@@ -95,7 +95,10 @@ class GenRecTokenizer:
         if batch_items_sim is not None and not isinstance(batch_items_sim[0], list):
             batch_items_sim = [batch_items_sim]
 
-        tokenized_sequences = [self.encode(item_list, sim_list) for item_list, sim_list in zip(batch_items, batch_items_sim)]
+        if batch_items_sim is not None:
+            tokenized_sequences = [self.encode(item_list, sim_list) for item_list, sim_list in zip(batch_items, batch_items_sim)]
+        else:
+            tokenized_sequences = [self.encode(item_list) for item_list in batch_items]
 
         if truncation and max_length is not None:
             for i in range(len(tokenized_sequences)):
@@ -158,7 +161,7 @@ if __name__ == "__main__":
         map_file_path=mock_file_path,
         token_level_vocab_sizes=[4, 20, 50],
         special_vocab_size=10,
-        pad_token_id=-100,
+        pad_token_id=0,
     )
     # Expected offsets: [10, 10+4, 10+4+20] -> [10, 14, 34]
     print("Tokenizer initialized successfully.")

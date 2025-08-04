@@ -46,7 +46,7 @@ class GenRecMultiHead(T5ForConditionalGeneration):
 
     def ranking_loss(self, lm_logits, labels):
         if labels is not None:
-            loss_fct = CrossEntropyLoss(ignore_index=-100)
+            loss_fct = CrossEntropyLoss(ignore_index=0)
             losses = []
             token_levels = len(self.token_level_vocab_sizes)
 

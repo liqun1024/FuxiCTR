@@ -14,22 +14,29 @@ class ParquetDataset(Dataset):
     def __init__(self, file_path: str):
         self.data = pd.read_parquet(file_path)
 
+        list_col = ['item_hist', 'top_20_items', 'top_20_sims']
+        for col in list_col:
+            if isinstance(self.data[col].iloc[0], np.ndarray):
+                self.data[col] = self.data[col].apply(list)
+
+        item_hist_list = self.data['item_hist'].tolist()
+        target_item_list = self.data['target_item'].tolist()
+        final_input_seq_list = [hist + [-2, target] for hist, target in zip(item_hist_list, target_item_list)]
+        self.data['input_seq'] = final_input_seq_list
+
+        self.data['top_20_sims'] = self.data['top_20_sims'].apply(
+            lambda sims: [(int(i * 10000) + 10000) / 2 for i in sims] # [-1, 1] -> [0, 10000]
+        )
+
     def __len__(self) -> int:
         return len(self.data)
 
     def __getitem__(self, idx: int) -> Dict[str, List[int]]:
         row = self.data.iloc[idx]
-        input_seq = row['input_seq']
-        input_seq.extend([-1, row['target_item']])  # Append -1 and target item to input sequence
-
-        target_seq = row['top_20_items']
-        target_sim = row['top_20_sims']
-        target_sim = [int(i * 10000) for i in target_sim]  # Convert similarity to integer
-
         return {
-            "input_seq": input_seq,
-            "target_seq": target_seq,
-            "target_sim": target_sim
+            "input_seq": row["input_seq"],
+            "target_seq": row["top_20_items"],
+            "target_sim": row["top_20_sims"]
         }
 
 class SimDataLoader(DataLoader):

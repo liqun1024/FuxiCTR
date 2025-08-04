@@ -11,16 +11,17 @@ TOKEN_LEVEL_VOCAB_SIZES = [1024, 1024, 1024, 10001]
 SPECIAL_VOCAB_SIZE = 10
 MODEL_DIM = 128
 NUM_LAYERS = 2
-DECODER_START_TOKEN_ID = 1
 LOSS_TEMPERATURE = 1.0
 
 # -- Tokenizer Configuration --
-PAD_TOKEN_ID = -100
+PAD_TOKEN_ID = 0
+HIST_TARGER_TOKEN_ID = 1
+DECODER_START_TOKEN_ID = 2
 TOKENIZER_MAP_FILE = "/home/liqun03/FuxiCTR/checkpoints/item_tokens_zero_based.parquet"
 
 # -- Training Configuration --
 DEVICE = "cuda"
 BATCH_SIZE = 128
-NUM_EPOCHS = 10
-LEARNING_RATE = 1e-4
+NUM_EPOCHS = 5
+LEARNING_RATE = 1e-3
 LOG_INTERVAL = 10 # Log training loss every N steps
