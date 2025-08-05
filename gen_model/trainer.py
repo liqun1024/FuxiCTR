@@ -45,25 +45,27 @@ class Trainer:
     
     def _init_metrics(self):
         self.metrics = {}
-        token_levels = len(self.token_level_vocab_sizes)
+        token_levels = len(self.model.token_level_vocab_sizes)
         for i in range(token_levels):
             self.metrics[f"level_{i}_accuracy"] = 0
         self.metrics[f"total"] = 0
         self.metrics["item_accuracy"] = 0
 
     def _update_metrics(self, predictions, labels):
-        token_levels = len(self.token_level_vocab_sizes)
+        token_levels = len(self.model.token_level_vocab_sizes)
+        level_offsets = torch.tensor(self.model.level_offsets, device=self.model.device)
         valid_mask = labels != self.model.pad_token_id
         self.metrics["total"] += valid_mask.sum().item() / token_levels
 
         for i in range(token_levels):
             level_predictions = predictions[:, i::token_levels]
-            level_labels = labels[:, i::token_levels]
+            level_labels = labels[:, i::token_levels] - level_offsets[i]
             level_mask = valid_mask[:, i::token_levels]
             self.metrics[f"level_{i}_accuracy"] += ((level_predictions == level_labels) & level_mask).sum().item()
 
         batch_size = labels.size(0)
         labels_item = labels.view(batch_size, -1, token_levels)
+        labels_item = labels_item - level_offsets
         predictions_item = predictions.view(batch_size, -1, token_levels)
         valid_item_mask = torch.all(labels_item != self.model.pad_token_id, dim=-1)
         correct_items_mask = torch.all(
@@ -97,13 +99,13 @@ class Trainer:
                 self._update_metrics(predictions, labels)
 
         avg_loss = total_loss / len(self.eval_loader)
-        print(f"\nEvaluation Loss: {avg_loss:.4f}")
+        print(f"Evaluation Loss: {avg_loss:.4f}")
         
-        print(f"\nEvaluation Metrics:\n")
+        print(f"===Evaluation Metrics===")
         for key, value in self.metrics.items():
             if "accuracy" in key:
                 value /= self.metrics["total"]
-            print(f"{key}: {value:.4f}\t")
+            print(f"{key}: {value:.4f}")
 
         return avg_loss
 
