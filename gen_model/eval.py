@@ -8,16 +8,21 @@ from transformers import T5Config
 
 def recall_at_k(true_items_list, pred_items_list, k):
     """
-    Calculates Recall@k.
+    Calculates Macro-averaged Recall@k.
     """
-    hits = 0
-    total_true = 0
+    total_recall = 0.0
+    num_users = 0
     for true, pred in zip(true_items_list, pred_items_list):
         true_set = {tuple(item) for item in true}
+        if not true_set:
+            continue
+        
+        num_users += 1
         pred_set = {tuple(item) for item in pred[:k]}
-        hits += len(true_set & pred_set)
-        total_true += len(true_set)
-    return hits / total_true if total_true > 0 else 0
+        hits = len(true_set & pred_set)
+        total_recall += hits / len(true_set)
+        
+    return total_recall / num_users if num_users > 0 else 0
 
 def ndcg_at_k(true_items_list, pred_items_list, k):
     """
