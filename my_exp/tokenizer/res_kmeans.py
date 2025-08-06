@@ -151,8 +151,8 @@ if __name__ == '__main__':
     # 默认这里输入的embedding是从1开始编号的，
     # 生成的item和token的ID都是从0开始编号。
 
-    model_path = "/home/liqun03/FuxiCTR/sasrec_item_embeddings.npy"
-    save_path = "/home/liqun03/FuxiCTR/my_datasets/taobao/item_tokens.parquet"
+    model_path = "/home/liqun03/FuxiCTR/checkpoints/sasrec_item_embeddings.npy"
+    save_path = "/home/liqun03/FuxiCTR/checkpoints/item_tokens_0_based.parquet"
     MAX_ID = 4162024
     N_CLUSTERS = 1024
     # 1. 处理Embedding数据
@@ -171,8 +171,8 @@ if __name__ == '__main__':
     for col in ['token_1', 'token_2', 'token_3']:
         min_val, max_val = final_tokens_df[col].min(), final_tokens_df[col].max()
         print(f"'{col}' range: [{min_val}, {max_val}]")
-        assert 1 <= min_val <= N_CLUSTERS
-        assert 1 <= max_val <= N_CLUSTERS
+        assert 0 <= min_val < N_CLUSTERS
+        assert 0 <= max_val < N_CLUSTERS
 
     print("\nFinal collision check:")
     num_duplicates = final_tokens_df.duplicated(subset=['token_1', 'token_2', 'token_3']).sum()

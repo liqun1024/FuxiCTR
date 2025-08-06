@@ -12,7 +12,7 @@ class Config:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.batch_size = 512
         self.embedding_dim = 64
-        self.max_seq_length = 201  # 最大序列长度
+        self.max_seq_length = 200  # 最大序列长度
         self.num_heads = 2
         self.num_blocks = 2  # transformer block数量
         self.dropout_rate = 0.1
@@ -39,8 +39,8 @@ class SASRecDataset(Dataset):
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
         
-        # 将target_item作为序列最后一个元素
-        full_seq = row['item_hist'] + [row['target_item']]
+        # 注意，原始数据集中，item_hist包含targe_item，其为最后一个元素
+        full_seq = row['item_hist']
         full_seq = full_seq[-self.max_len:]  # 截断
         
         # 输入序列（去掉最后一个元素）
@@ -386,7 +386,7 @@ def eval_model(model, val_loader, criterion, train_loss, cnt):
     )
 
     model.train()
-    return avg_val_loss
+    return avg_val_loss, avg_ndcg1, avg_ndcg5
 
 # 训练函数
 def train_model():
@@ -412,7 +412,7 @@ def train_model():
     )
     optimizer = optim.Adam(model.parameters(), lr=config.lr)
 
-    best_val_loss = float('inf')
+    best_ndcg1 = 0
     # 训练循环
     for epoch in range(config.num_epochs):
         model.train()
@@ -429,11 +429,12 @@ def train_model():
             train_loss += loss.item()
             # print(loss.item())
             if cnt % config.eval_per_step == 0:
-                avg_val_loss = eval_model(model, val_loader, criterion, train_loss, cnt)
+                avg_val_loss, avg_ndcg1, avg_ndcg5 = eval_model(model, val_loader, criterion, train_loss, cnt)
                 # 保存最佳模型
-                if avg_val_loss < best_val_loss:
-                    best_val_loss = avg_val_loss
+                if avg_ndcg1 > best_ndcg1:
+                    best_ndcg1 = avg_ndcg1
                     torch.save(model.state_dict(), 'sasrec_seq_best_model.pth')
+                    print(f'Model saved. (NDCG1 = {best_ndcg1:.4f})')
                 train_loss = 0
     
     # 测试

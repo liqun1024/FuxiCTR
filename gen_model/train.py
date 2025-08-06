@@ -44,17 +44,13 @@ def main():
         loss_temperature=config.LOSS_TEMPERATURE
     )
 
-    model_ckpt = torch.load("/home/liqun03/FuxiCTR/checkpoints/GenRec/model_epoch_5.pth", map_location=model.device)
-    model.load_state_dict(model_ckpt["model_state_dict"])
-
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
         eval_loader=valid_loader,
         device=device
     )
-    # trainer.train()
-    trainer.evaluate()
+    trainer.train()
 
 if __name__ == '__main__':
     main()

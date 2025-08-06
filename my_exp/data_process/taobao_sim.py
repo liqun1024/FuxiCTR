@@ -7,7 +7,10 @@ import os
 def find_top_k_similar_items(row, embeddings, k=20):
     try:
         target_item_id = row['target_item']
-        history_item_ids = row['item_hist']
+        history_item_ids = row['item_hist'][:-1] # last item is target
+
+        if len(history_item_ids) == 0:
+            return pd.Series([[], []], index=['top_20_items', 'top_20_sims'])
 
         target_emb = embeddings[target_item_id]
         hist_embs = embeddings[history_item_ids]
@@ -54,7 +57,7 @@ if __name__ == "__main__":
         # Adjusting indices to be zero-based
         final_df['uid'] = final_df['uid'] - 1
         final_df['target_item'] = final_df['target_item'] - 1
-        final_df['item_hist'] = final_df['item_hist'].apply(lambda x: [i - 1 for i in x])
+        final_df['item_hist'] = final_df['item_hist'].apply(lambda x: [i - 1 for i in x[:-1]]) # last item is target
         final_df['top_20_items'] = final_df['top_20_items'].apply(lambda x: [i - 1 for i in x])
 
 

@@ -9,11 +9,36 @@ demo/exp6: \
 从生成式模型开始，固定使用item从0开始编号，同时对于输入的数据，不固定具体的长度，使用tokenizer实现padding。
 SEP_TOKEN: 0-padding, 1-history和target之间的间隔token, 2-decoder的start token
 
+Evaluation Metrics:
+
+level_0_accuracy: 0.4439
+level_1_accuracy: 0.8071
+level_2_accuracy: 0.9803
+level_3_accuracy: 0.2345
+total: 3888460.0000
+item_accuracy: 0.3518
+
+
+Recall@10: 0.3367
+NDCG@10: 0.8486
+
+---
+# SASRec
+~~最终训练：~~
+~~Step 1301: Train Loss = 0.0072, Val Loss = 0.1702, NDCG@1 = 0.6577, NDCG@5 = 0.7560~~
+~~上述因为最后一个item（target item）被重复两次，需要重新训练。~~
+
+Step 1301: Train Loss = 0.0073, Val Loss = 0.1797, NDCG@1 = 0.6573, NDCG@5 = 0.7579
+Model saved. (NDCG1 = 0.6573)
+Test Loss: 0.1855
 ---
 # taobao
+**！！！注意！！！**：由于LongCTR的模型中，默认item侧的序列中最后一个是target，因此我们处理的数据集的item_hist的最后一个是target，其他模型处理的时候需要删除。
 item编号: 1-4162024
 使用DIN训练的Embedding由于没有正负样本的对比loss，因此相似性更高，在进行tokenizer的时候几乎存在40%的item撞id（设置codesize=1024，layer=3，同时强制均匀聚类max_points_per_centroid也不可以）
 改为使用SASRec获得embedding。设置codesize=512，并均匀聚类，有1/7的冲突，仍然不够好。
+
+最终选择设置1024*3的码本，并且设置max_points_per_centroid=4096，冲突为675730个，均在最后一层重置解决。
 
 ---
 # MovieLens-1M数据处理
