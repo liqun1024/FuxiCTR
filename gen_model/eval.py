@@ -31,11 +31,13 @@ def ndcg_at_k(true_items_list, pred_items_list, k):
     total_ndcg = 0.0
     num_users = len(true_items_list)
     for true, pred in zip(true_items_list, pred_items_list):
-        true_set = {tuple(item) for item in true}
+        true_set = [tuple(item) for item in true]
+        available_true_set = list(true_set)
         dcg = 0.0
         for j, p in enumerate(pred[:k]):
-            if tuple(p) in true_set:
+            if tuple(p) in available_true_set:
                 dcg += 1.0 / np.log2(j + 2)
+                available_true_set.remove(tuple(p))
         
         idcg = sum(1.0 / np.log2(j + 2) for j in range(min(len(true_set), k)))
         
@@ -113,11 +115,11 @@ def evaluate_generation():
                     all_pred_items.append(pred_items_to_compare[i])
 
     # Calculate and print metrics
-    recall_10 = recall_at_k(all_true_items, all_pred_items, k=10)
-    ndcg_10 = ndcg_at_k(all_true_items, all_pred_items, k=10)
+    recall_20 = recall_at_k(all_true_items, all_pred_items, k=20)
+    ndcg_20 = ndcg_at_k(all_true_items, all_pred_items, k=20)
 
-    print(f"Recall@10: {recall_10:.4f}")
-    print(f"NDCG@10: {ndcg_10:.4f}")
+    print(f"Recall@20: {recall_20:.4f}")
+    print(f"NDCG@20: {ndcg_20:.4f}")
 
 if __name__ == '__main__':
     evaluate_generation()

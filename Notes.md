@@ -9,18 +9,9 @@ demo/exp6: \
 从生成式模型开始，固定使用item从0开始编号，同时对于输入的数据，不固定具体的长度，使用tokenizer实现padding。
 SEP_TOKEN: 0-padding, 1-history和target之间的间隔token, 2-decoder的start token
 
-Evaluation Metrics:
-
-level_0_accuracy: 0.4439
-level_1_accuracy: 0.8071
-level_2_accuracy: 0.9803
-level_3_accuracy: 0.2345
-total: 3888460.0000
-item_accuracy: 0.3518
-
-
-Recall@10: 0.3367
-NDCG@10: 0.8486
+计算NDCG的时候，对于重复样本只计算排名靠前的次数（和labe次数一致）
+Recall@20: 0.3831
+NDCG@20: 0.4855
 
 ---
 # SASRec
