@@ -25,3 +25,7 @@ BATCH_SIZE = 128
 NUM_EPOCHS = 5
 LEARNING_RATE = 1e-3
 LOG_INTERVAL = 10 # Log training loss every N steps
+
+# -- Reward Model --
+CONFIG_DIR = "/home/liqun03/FuxiCTR/gen_model"
+MODEL_PATH = "/home/liqun03/FuxiCTR/checkpoints/SIM_model.pth"

@@ -182,24 +182,54 @@ class GenRecMultiHead(T5ForConditionalGeneration):
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        max_length: int = 20
+        max_length: int = 80,
+        strategy: str = 'greedy',
+        num_beams: int = 5,
+        temperature: float = 1.0,
+        top_k: int = 0,
+        top_p: float = 1.0,
     ):
         """
-        Generates token sequences autoregressively for the GenRec model.
-        This is a simplified implementation using greedy search.
+        Generates token sequences autoregressively.
 
         Args:
-            input_ids (`torch.Tensor` of shape `(batch_size, sequence_length)`):
-                The input sequence IDs.
-            attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`):
-                Mask to avoid performing attention on padding token indices.
-            max_length (`int`, *optional*, defaults to 20):
-                The maximum length of the sequence to be generated.
-        
+            input_ids (`torch.Tensor`): Input sequence IDs.
+            attention_mask (`torch.Tensor`): Attention mask.
+            max_length (`int`): Maximum length of the generated sequence.
+            strategy (`str`): 'greedy', 'sampling', or 'beam_search'.
+            num_beams (`int`): Number of beams for beam search.
+            temperature (`float`): Temperature for sampling.
+            top_k (`int`): Top-k filtering for sampling.
+            top_p (`float`): Top-p (nucleus) filtering for sampling.
+
         Returns:
-            `torch.Tensor` of shape `(batch_size, sequence_length)`:
-                The generated sequence of token IDs.
+            `torch.Tensor`: The generated sequence of token IDs.
         """
+        self.eval()
+        if strategy == 'greedy':
+            generated_ids = self._greedy_search(input_ids, attention_mask, max_length)
+        elif strategy == 'sampling':
+            generated_ids = self._sampling_search(input_ids, attention_mask, max_length, temperature, top_k, top_p)
+        elif strategy == 'beam_search':
+            generated_ids = self._beam_search(input_ids, attention_mask, max_length, num_beams)
+        else:
+            raise ValueError(f"Unknown generation strategy: {strategy}")
+
+        batch_size = input_ids.shape[0]
+        input_length = (input_ids != self.pad_token_id).sum(dim=-1)
+        generated_length = input_length - len(self.level_offsets)  # max generated length is all candidate tokens
+        indices = torch.arange(max_length, device=generated_ids.device)
+        mask = indices.expand(batch_size, -1) >= generated_length.unsqueeze(-1)
+        generated_ids = generated_ids.masked_fill(mask, self.pad_token_id)
+
+        return generated_ids
+
+    def _greedy_search(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        max_length: int = 20
+    ):
         self.eval()
 
         batch_size = input_ids.shape[0]
@@ -252,6 +282,159 @@ class GenRecMultiHead(T5ForConditionalGeneration):
 
         return generated_ids
 
+    def _sampling_search(self, input_ids, attention_mask, max_length, temperature, top_k, top_p):
+        self.eval()
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
+        
+        inputs_embeds = self.embeddings(input_ids)
+        encoder_outputs = self.encoder(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            return_dict=True,
+        )
+        encoder_hidden_states = encoder_outputs.last_hidden_state
+
+        decoder_start_ids = torch.full(
+            (batch_size, 1), self.config.decoder_start_token_id, dtype=torch.long, device=device
+        )
+        decoder_inputs_embeds = self.embeddings(decoder_start_ids)
+
+        generated_ids = torch.empty((batch_size, 0), dtype=torch.long, device=device)
+        past_key_values = None
+        token_levels = len(self.token_level_vocab_sizes)
+
+        for step in range(max_length):
+            token_level_idx = step % token_levels
+            decoder_outputs = self.decoder(
+                inputs_embeds=decoder_inputs_embeds,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+                return_dict=True,
+            )
+            
+            last_hidden_state = decoder_outputs.last_hidden_state
+            lm_head = self.lm_heads[token_level_idx]
+            logits = lm_head(last_hidden_state)
+            next_token_logits = logits.squeeze(1)
+
+            if temperature != 1.0:
+                next_token_logits = next_token_logits / temperature
+
+            if top_k > 0:
+                top_k_logits, _ = torch.topk(next_token_logits, top_k)
+                k_th_value = top_k_logits[:, -1]
+                indices_to_remove = next_token_logits < k_th_value[:, None]
+                next_token_logits[indices_to_remove] = -float('Inf')
+
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                cumulative_probs = torch.cumsum(torch.nn.functional.softmax(sorted_logits, dim=-1), dim=-1)
+                
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+
+                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                next_token_logits[indices_to_remove] = -float('Inf')
+
+            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+            next_token_id = torch.multinomial(probs, num_samples=1)
+
+            next_token_id = self.level_offsets[token_level_idx] + next_token_id
+            generated_ids = torch.cat([generated_ids, next_token_id], dim=1)
+            decoder_inputs_embeds = self.embeddings(next_token_id)
+            past_key_values = decoder_outputs.past_key_values
+
+        return generated_ids
+
+    def _beam_search(self, input_ids, attention_mask, max_length, num_beams):
+        self.eval()
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
+        token_levels = len(self.token_level_vocab_sizes)
+
+        inputs_embeds = self.embeddings(input_ids)
+        encoder_outputs = self.encoder(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            return_dict=True,
+        )
+        encoder_hidden_states = encoder_outputs.last_hidden_state
+
+        expanded_batch_size = batch_size * num_beams
+        expanded_encoder_hidden_states = encoder_hidden_states.repeat_interleave(num_beams, dim=0)
+        expanded_attention_mask = attention_mask.repeat_interleave(num_beams, dim=0)
+
+        decoder_start_ids = torch.full(
+            (expanded_batch_size, 1), self.config.decoder_start_token_id, dtype=torch.long, device=device
+        )
+        
+        generated_ids = decoder_start_ids
+
+        beam_scores = torch.zeros((batch_size, num_beams), device=device)
+        beam_scores[:, 1:] = -1e9
+        beam_scores = beam_scores.view(-1)
+
+        past_key_values = None
+
+        for step in range(max_length):
+            token_level_idx = step % token_levels
+
+            current_input_ids = generated_ids[:, -1].unsqueeze(-1) # (batch_size * num_beams, 1)
+            decoder_inputs_embeds = self.embeddings(current_input_ids)
+
+            decoder_outputs = self.decoder(
+                inputs_embeds=decoder_inputs_embeds,
+                encoder_hidden_states=expanded_encoder_hidden_states,
+                encoder_attention_mask=expanded_attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+                return_dict=True,
+            )
+
+            last_hidden_state = decoder_outputs.last_hidden_state 
+            past_key_values = decoder_outputs.past_key_values
+            
+            lm_head = self.lm_heads[token_level_idx]
+            logits = lm_head(last_hidden_state)
+            next_token_logits = logits.squeeze(1) # (batch_size * num_beams, vocab_size)
+
+            log_probs = torch.nn.functional.log_softmax(next_token_logits, dim=-1)
+
+            scores = log_probs + beam_scores.unsqueeze(1) # (batch_size * num_beams, vocab_size)
+
+            vocab_size = self.token_level_vocab_sizes[token_level_idx]
+            scores = scores.view(batch_size, num_beams * vocab_size)
+
+            next_beam_scores, next_beam_indices = torch.topk(scores, num_beams, dim=1, largest=True, sorted=True)
+
+            next_beam_ids = torch.div(next_beam_indices, vocab_size, rounding_mode='floor')
+            next_token_ids = next_beam_indices % vocab_size
+
+            batch_idx = torch.arange(batch_size, device=device).unsqueeze(1).repeat(1, num_beams)
+            beam_idx = (batch_idx * num_beams + next_beam_ids).view(-1)
+            
+            past_key_values = self._reorder_cache(past_key_values, beam_idx)
+            
+            next_token_ids_with_offset = self.level_offsets[token_level_idx] + next_token_ids
+            generated_ids = generated_ids[beam_idx]
+            generated_ids = torch.cat([generated_ids, next_token_ids_with_offset.view(-1, 1)], dim=-1)
+
+            beam_scores = next_beam_scores.view(-1)
+
+        best_sequences = generated_ids.view(batch_size, num_beams, -1)[:, 0, :]
+        
+        return best_sequences[:, 1:]
+
+    def _reorder_cache(self, past, beam_idx):
+        reordered_past = []
+        for layer_past in past:
+            reordered_past.append(tuple(past_state.index_select(0, beam_idx) for past_state in layer_past))
+        return tuple(reordered_past)
+
 
 if __name__ == '__main__':
     token_level_vocab_sizes = [10, 10, 10, 100]
@@ -294,9 +477,31 @@ if __name__ == '__main__':
     
 
     with torch.no_grad():
+        print("\nGreedy search:")
         generated_ids = model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
             max_length=8
         )
-    print(f"Generated IDs: {generated_ids}")
+        print(f"Generated IDs: {generated_ids}")
+
+        print("\nSampling search:")
+        generated_ids_sampling = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_length=8,
+            strategy='sampling',
+            temperature=0.7,
+            top_k=50
+        )
+        print(f"Generated IDs (sampling): {generated_ids_sampling}")
+
+        print("\nBeam search:")
+        generated_ids_beam = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_length=8,
+            strategy='beam_search',
+            num_beams=4
+        )
+        print(f"Generated IDs (beam search): {generated_ids_beam}")

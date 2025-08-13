@@ -1,6 +1,6 @@
 import pandas as pd
 import torch
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Tuple
 
 class GenRecTokenizer:
     """
@@ -35,6 +35,7 @@ class GenRecTokenizer:
         self.token_col_prefix = token_col_prefix
         
         self.item_to_tokens_map = self._load_token_map(map_file_path)
+        self.tokens_to_item_map = {tuple(v): k for k, v in self.item_to_tokens_map.items()}
 
         self.level_offsets = [0] * len(token_level_vocab_sizes)
         cumulative_offset = special_vocab_size
@@ -152,6 +153,55 @@ class GenRecTokenizer:
             result["attention_mask"] = torch.tensor(result["attention_mask"], dtype=torch.long)
 
         return result
+
+    def decode(self, token_ids: torch.Tensor, has_similarity: bool = False) -> Tuple[List[int], int]:
+        decoded_items = []
+        i = 0
+        missing_items = 0
+
+        num_hierarchical_tokens = len(self.token_level_vocab_sizes) - 1
+        if num_hierarchical_tokens < 0:
+            raise ValueError("`token_level_vocab_sizes` must have at least one element.")
+
+        chunk_size = num_hierarchical_tokens
+        if has_similarity:
+            chunk_size += 1
+
+        while i < token_ids.shape[0]:
+            token = token_ids[i]
+
+            if 0 <= token < self.special_vocab_size:
+                decoded_items.append(-(token.item() + 1))
+                i += 1
+                continue
+            
+            hierarchical_tokens_chunk = token_ids[i : i + num_hierarchical_tokens]
+            unoffset_tokens = []
+            for j in range(num_hierarchical_tokens):
+                unoffset_tokens.append(hierarchical_tokens_chunk[j].item() - self.level_offsets[j])
+            item_id = self.tokens_to_item_map.get(tuple(unoffset_tokens))
+            if item_id is not None:
+                decoded_items.append(item_id)
+            else:
+                missing_items += 1
+
+            i += chunk_size
+        
+        if not has_similarity:
+            assert missing_items == 0, "Some items could not be decoded from the token sequence."
+
+        return decoded_items, missing_items
+
+    def batch_decode(self, 
+                     sequences: torch.Tensor, 
+                     has_similarity: bool = False) -> List[Tuple[List[int], int]]:
+        decoded_batch = []
+        missing_items_batch = []
+        for i in range(sequences.shape[0]):
+            decoded_seq, missing_items = self.decode(sequences[i], has_similarity=has_similarity)
+            decoded_batch.append(decoded_seq)
+            missing_items_batch.append(missing_items)
+        return decoded_batch, missing_items_batch
 
 if __name__ == "__main__":
     import os
