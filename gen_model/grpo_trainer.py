@@ -60,6 +60,7 @@ class GRPOTrainer:
         for i, batch in progress_bar:
             input_ids = batch["input_ids"].to(self.device)
             attention_mask = batch["attention_mask"].to(self.device)
+            candidate_items = batch["input_items"]
             target_label = batch["target_label"].to(self.device)
             batch_size = input_ids.shape[0]
 
@@ -77,7 +78,7 @@ class GRPOTrainer:
                     temperature=0.7
                 )
 
-            rewards = self.RewardCalculator(sampled_sequences, expanded_input_ids, expanded_target_label, self.K_SAMPLES) # (batch_size * K)
+            rewards = self.RewardCalculator(sampled_sequences, candidate_items, expanded_target_label, self.K_SAMPLES) # (batch_size * K)
 
             outputs = self.model(input_ids=expanded_input_ids, attention_mask=expanded_attention_mask, labels=sampled_sequences)
             logits = outputs.logits # (batch_size * K, seq_len, max_vocab_size)

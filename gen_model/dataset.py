@@ -67,6 +67,8 @@ class BatchCollator:
         input_sequences = [item['input_seq'] for item in batch]
         target_sequences = [item['target_seq'] for item in batch]
         target_similarities = [item['target_sim'] for item in batch]
+
+        input_items = [item['input_seq'] for item in batch]
         target_label = [item['target_label'] for item in batch]
 
         encoder_inputs = self.tokenizer(input_sequences)
@@ -77,6 +79,7 @@ class BatchCollator:
             "input_ids": encoder_inputs["input_ids"],
             "attention_mask": encoder_inputs["attention_mask"],
             "labels": labels["input_ids"],
+            "input_items": input_items,
             "target_label": target_label
         }
 

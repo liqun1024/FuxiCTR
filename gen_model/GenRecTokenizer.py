@@ -1,5 +1,6 @@
 import pandas as pd
 import torch
+import numpy as np
 from typing import List, Dict, Union, Tuple
 
 class GenRecTokenizer:
@@ -42,6 +43,8 @@ class GenRecTokenizer:
         for i, size in enumerate(token_level_vocab_sizes):
             self.level_offsets[i] = cumulative_offset
             cumulative_offset += size
+        
+        self._create_flat_item_map()
 
     def _load_token_map(self, map_file_path: str) -> Dict[int, List[int]]:
         df = pd.read_parquet(map_file_path)
@@ -60,6 +63,19 @@ class GenRecTokenizer:
 
         token_map = df[token_cols].apply(lambda row: row.tolist(), axis=1).to_dict()
         return token_map
+
+    def _create_flat_item_map(self):
+        num_hierarchical_tokens = len(self.token_level_vocab_sizes) - 1
+
+        item_token_vocabs = self.token_level_vocab_sizes[:num_hierarchical_tokens]
+
+        vocabs = np.array(item_token_vocabs)
+        self.strides_for_flat_map = np.array([np.prod(vocabs[i+1:]) for i in range(len(vocabs)-1)] + [1])
+
+        self.flat_tokens_to_item_map = {}
+        for unoffset_tokens_tuple, item_id in self.tokens_to_item_map.items():
+            flat_key = np.dot(unoffset_tokens_tuple, self.strides_for_flat_map)
+            self.flat_tokens_to_item_map[int(flat_key)] = item_id
 
     def encode(self, item_list: List[int], sim_list: List[int] = None) -> List[int]:
         input_ids = []
@@ -154,55 +170,38 @@ class GenRecTokenizer:
 
         return result
 
-    def decode(self, token_ids: torch.Tensor, has_similarity: bool = False) -> Tuple[List[int], int]:
-        decoded_items = []
-        i = 0
-        missing_items = 0
-
-        num_hierarchical_tokens = len(self.token_level_vocab_sizes) - 1
-        if num_hierarchical_tokens < 0:
-            raise ValueError("`token_level_vocab_sizes` must have at least one element.")
-
-        chunk_size = num_hierarchical_tokens
-        if has_similarity:
-            chunk_size += 1
-
-        while i < token_ids.shape[0]:
-            token = token_ids[i]
-
-            if 0 <= token < self.special_vocab_size:
-                if token != self.pad_token_id:
-                    decoded_items.append(-(token.item() + 1))
-                i += 1
-                continue
-            
-            hierarchical_tokens_chunk = token_ids[i : i + num_hierarchical_tokens]
-            unoffset_tokens = []
-            for j in range(num_hierarchical_tokens):
-                unoffset_tokens.append(hierarchical_tokens_chunk[j].item() - self.level_offsets[j])
-            item_id = self.tokens_to_item_map.get(tuple(unoffset_tokens))
-            if item_id is not None:
-                decoded_items.append(item_id)
-            else:
-                missing_items += 1
-
-            i += chunk_size
+    def decode(self, sequences: torch.Tensor) -> Tuple[List[int], int]:
+        sequences_np = sequences.cpu().numpy()
         
-        if not has_similarity:
-            assert missing_items == 0, "Some items could not be decoded from the token sequence."
+        batch_size, seq_len = sequences_np.shape
+        num_hierarchical_tokens = len(self.token_level_vocab_sizes) - 1
 
-        return decoded_items, missing_items
+        indices = np.arange(seq_len)
+        mask = indices % (num_hierarchical_tokens + 1) != num_hierarchical_tokens
 
-    def batch_decode(self, 
-                     sequences: torch.Tensor, 
-                     has_similarity: bool = False) -> List[Tuple[List[int], int]]:
-        decoded_batch = []
-        missing_items_batch = []
-        for i in range(sequences.shape[0]):
-            decoded_seq, missing_items = self.decode(sequences[i], has_similarity=has_similarity)
-            decoded_batch.append(decoded_seq)
-            missing_items_batch.append(missing_items)
-        return decoded_batch, missing_items_batch
+        item_chunks = sequences_np[:, mask].reshape(batch_size, -1, num_hierarchical_tokens)
+        
+        valid_item_mask = (item_chunks[:, :, 0] != self.pad_token_id)
+        
+        valid_chunks = item_chunks[valid_item_mask]
+        
+        level_offsets_np = self.level_offsets[:num_hierarchical_tokens]
+        unoffset_tokens = valid_chunks - level_offsets_np
+        flat_keys = np.dot(unoffset_tokens, self.strides_for_flat_map)
+        decoded_ids = np.array([self.flat_tokens_to_item_map.get(key, -1) for key in flat_keys])
+
+        final_decoded_ids = np.full(valid_item_mask.shape, -2, dtype=int) # -2 代表 padding
+        final_decoded_ids[valid_item_mask] = decoded_ids
+
+        valid_item_mask = final_decoded_ids != -1
+        missing_counts = np.sum(~valid_item_mask, axis=1).tolist()
+        valid_item_mask &= (final_decoded_ids != -2)
+        decoded_batch = [
+            final_decoded_ids[i][valid_item_mask[i]].tolist() for i in range(batch_size)
+        ]
+
+        return decoded_batch, missing_counts
+
 
 if __name__ == "__main__":
     import os
@@ -218,7 +217,7 @@ if __name__ == "__main__":
 
     tokenizer = GenRecTokenizer(
         map_file_path=mock_file_path,
-        token_level_vocab_sizes=[4, 20, 50],
+        token_level_vocab_sizes=[4, 20, 50, 10000],
         special_vocab_size=10,
         pad_token_id=0,
     )
@@ -226,9 +225,16 @@ if __name__ == "__main__":
     print("Tokenizer initialized successfully.")
     print(f"Level offsets: {tokenizer.level_offsets}\n")
 
-    input = [[-1, 103, 101, -2]] # -1 -> 0, -2 -> 1
-    output = tokenizer(input, padding=None, return_tensors='pt')
+    input = [[101, 102, 104, -2, 103], [102, -2, 101]]
+    output = tokenizer(input, return_tensors='pt')
     print(f"Input: {input}")
     print(f"Output 'input_ids':\n{output['input_ids']}")
+
+    input = [[10, 19, 57, 999, 11, 27, 79, 999, 12, 29, 64, 999, 0, 0, 0, 0],
+             [11, 26, 79, 999, 10, 19, 57, 999, 0, 0, 0, 0, 0, 0, 0, 0]]
+    input = torch.tensor(input, dtype=torch.long)
+    output, missing_counts = tokenizer.decode(input)
+    print(f"Decoded output: {output}")
+    print(f"Missing counts: {missing_counts}")
 
     os.remove(mock_file_path)  # Clean up mock file after testing

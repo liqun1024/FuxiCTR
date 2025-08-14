@@ -50,11 +50,8 @@ class RewardCalculator:
             masks.append(mask)
         return torch.tensor(inputs, dtype=torch.long, device=self.device), torch.tensor(masks, dtype=torch.bool, device=self.device)
 
-    def __call__(self, generated_ids, candidate_ids, target_label, K_SAMPLES):
-        batch_size = generated_ids.shape[0]
-        generated_items, missing_items = self.tokenizer.batch_decode(generated_ids, has_similarity=True)
-        # TODO: 存在重复计算
-        candidate_items, _ = self.tokenizer.batch_decode(candidate_ids[::5, :])
+    def __call__(self, generated_ids, candidate_items, target_label, K_SAMPLES):
+        generated_items, missing_items = self.tokenizer.decode(generated_ids, has_similarity=True)
         candidate_items = [l for l in candidate_items for _ in range(K_SAMPLES)]
 
         rewards_item = ['total_rewards', 'integrity_rewards', 'count_rewards', 'sim_rewards']
