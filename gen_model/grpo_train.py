@@ -6,6 +6,8 @@ from dataset import TaobaoSimDataLoader
 from grpo_trainer import GRPOTrainer
 from transformers import T5Config
 
+from GenRecTokenizer import GenRecTokenizer
+
 
 def main():
     device = torch.device(config.DEVICE)
@@ -19,6 +21,12 @@ def main():
         special_vocab_size=config.SPECIAL_VOCAB_SIZE,
         batch_size=config.BATCH_SIZE
     ).make_iterator()
+
+    tokenizer = GenRecTokenizer(
+        map_file_path=config.TOKENIZER_MAP_FILE,  # Assuming no map file is needed for this example
+        token_level_vocab_sizes=config.TOKEN_LEVEL_VOCAB_SIZES,
+        special_vocab_size=config.SPECIAL_VOCAB_SIZE
+    )
 
     model_config = T5Config(
         vocab_size=1, 
@@ -44,6 +52,7 @@ def main():
         model=model,
         train_loader=train_loader,
         eval_loader=valid_loader,
+        tokenizer=tokenizer,
         device=device
     )
     trainer.train()

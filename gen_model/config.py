@@ -20,12 +20,12 @@ DECODER_START_TOKEN_ID = 2
 TOKENIZER_MAP_FILE = "/home/liqun03/FuxiCTR/checkpoints/item_tokens_zero_based.parquet"
 
 # -- Training Configuration --
-DEVICE = "cuda"
-BATCH_SIZE = 128
+DEVICE = "cuda:0"
+BATCH_SIZE = 32
 NUM_EPOCHS = 5
 LEARNING_RATE = 1e-3
 LOG_INTERVAL = 10 # Log training loss every N steps
 
 # -- Reward Model --
 CONFIG_DIR = "/home/liqun03/FuxiCTR/gen_model"
-MODEL_PATH = "/home/liqun03/FuxiCTR/checkpoints/SIM_model.pth"
+MODEL_PATH = "/home/liqun03/FuxiCTR/my_exp/base/checkpoints/taobao/SIM.model"

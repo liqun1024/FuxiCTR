@@ -16,6 +16,9 @@
 
 import torch
 from torch import nn
+import os, sys
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(parent_dir)
 from fuxictr.pytorch.models import BaseModel
 from fuxictr.pytorch.layers import FeatureEmbedding, MLP_Block, MultiHeadTargetAttention
 
@@ -93,7 +96,7 @@ class SIM(BaseModel):
         self.model_to_device()
 
     def forward(self, inputs):
-        item_dict, item_mask, topk_dict, topk_mask = inputs
+        item_dict, item_mask, topk_dict, topk_mask, _ = inputs
         item_feat_emb = self.embedding_layer(item_dict, flatten_emb=True)
         batch_size = item_mask.shape[0]
         item_feat_emb = item_feat_emb.view(batch_size, -1, self.item_info_dim)
@@ -107,21 +110,18 @@ class SIM(BaseModel):
         # long interest attention
         topk_emb = self.embedding_layer(topk_dict, flatten_emb=True)
         long_interest_emb = self.long_attention(target_emb, topk_emb, topk_mask)
-        emb_list = emb_list[0:-1] + [short_interest_emb, long_interest_emb]
+        emb_list = [target_emb, target_emb, short_interest_emb, long_interest_emb]
         feature_emb = torch.cat(emb_list, dim=-1)
         y_pred = self.dnn(feature_emb)
         return y_pred
 
     def add_loss(self, y_pred, y_true):
-        return self.loss_fn(y_pred, y_true, reduction='mean')
+        return self.loss_fn(y_pred, y_true, reduction='none')
 
     def get_labels(self, inputs):
         """ Please override get_labels() when using multiple labels!
         """
-        labels = self.feature_map.labels
-        batch_dict = inputs[0]
-        y = batch_dict[labels[0]].to(self.device)
-        return y.float().view(-1, 1)
+        return inputs[4].float().view(-1, 1)
                 
     def get_group_id(self, inputs):
         return inputs[0][self.feature_map.group_id]
@@ -130,5 +130,4 @@ class SIM(BaseModel):
         y_pred = self.forward(batch_data)
         y_true = self.get_labels(batch_data)
         loss = self.compute_loss(y_pred, y_true)
-        loss = loss / self.accumulation_steps
         return loss

@@ -2,8 +2,11 @@ import os
 import torch
 
 from SIM import SIM
-from ..fuxictr.utils import load_config
-from ..fuxictr.features import FeatureMap
+import os, sys
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(parent_dir)
+from fuxictr.utils import load_config
+from fuxictr.features import FeatureMap
 
 class RewardCalculator:
     def __init__(self, tokenizer, config_dir, model_path, device):
@@ -27,17 +30,17 @@ class RewardCalculator:
         return model
     
     def _process_seq(self, seq, select_seq=False):
-        processed_sequences = []
+        seqs = []
         for s in seq:
             if not select_seq:
-                processed_seq = s[:-2] + [s[-1]] # delete <special_token> (sperate history and target)
-            processed_sequences.append(processed_seq)
+                s = s[:-2] + [s[-1]] # delete <special_token> (sperate history and target)
+            seqs.append(s)
 
-        max_len = max(len(s) for s in processed_sequences) if processed_sequences else 0
+        max_len = max(len(s) for s in seqs) if seqs else 0
         
         inputs = []
         masks = []
-        for s in processed_sequences:
+        for s in seqs:
             # 左填充：在前面补0
             padding = [0] * (max_len - len(s))
             padded_seq = padding + s
@@ -47,10 +50,12 @@ class RewardCalculator:
             masks.append(mask)
         return torch.tensor(inputs, dtype=torch.long, device=self.device), torch.tensor(masks, dtype=torch.bool, device=self.device)
 
-    def __call__(self, generated_ids, candidate_ids):
+    def __call__(self, generated_ids, candidate_ids, target_label, K_SAMPLES):
         batch_size = generated_ids.shape[0]
-        generated_items, missing_items = self.tokenizer.decode_batch(generated_ids, has_similarity=True)
-        candidate_items, _ = self.tokenizer.decode_batch(candidate_ids)
+        generated_items, missing_items = self.tokenizer.batch_decode(generated_ids, has_similarity=True)
+        # TODO: 存在重复计算
+        candidate_items, _ = self.tokenizer.batch_decode(candidate_ids[::5, :])
+        candidate_items = [l for l in candidate_items for _ in range(K_SAMPLES)]
 
         rewards_item = ['total_rewards', 'integrity_rewards', 'count_rewards', 'sim_rewards']
         rewards = {key: [] for key in rewards_item}
@@ -68,20 +73,22 @@ class RewardCalculator:
                 valid_items -= diff
             count_rewards = max(valid_items, 0) / len(gen_items) if gen_items else 0
 
-            if not gen_items:
-                rewards.append(0)
-                continue
-            item, item_mask = self._process_seq(cand_items, select_seq=False)
-            topk_item, topk_mask = self._process_seq(cand_items, select_seq=True)
-            item_dict = {"item_hist": item}
-            topk_item_dict = {"item_hist": topk_item}
-            sim_rewards = 5 - self.SIM.get_loss(item_dict, item_mask, topk_item_dict, topk_mask).item()
-
-            total_rewards = 2 * integrity_rewards + 2 * count_rewards + 10 * sim_rewards
-
-            rewards["total_rewards"].append(total_rewards)
             rewards["integrity_rewards"].append(integrity_rewards)
             rewards["count_rewards"].append(count_rewards)
-            rewards["sim_rewards"].append(sim_rewards)
+
+        rewards["integrity_rewards"] = torch.tensor(rewards["integrity_rewards"], device=target_label.device)
+        rewards["count_rewards"] = torch.tensor(rewards["count_rewards"], device=target_label.device)
+
+        item, item_mask = self._process_seq(candidate_items, select_seq=False)
+        topk_item, topk_mask = self._process_seq(generated_items, select_seq=True)
+        item_dict = {"item_hist": item}
+        topk_item_dict = {"item_hist": topk_item}
+        sim_loss = self.SIM.get_loss((item_dict, item_mask, topk_item_dict, topk_mask, target_label))
+        sim_loss = sim_loss.squeeze(1).reshape(-1, K_SAMPLES)
+        sim_rewards = sim_loss - sim_loss.min(dim=1, keepdim=True)[0]
+        sim_rewards = torch.nn.functional.normalize(sim_rewards)
+        rewards["sim_rewards"] = sim_rewards.reshape(-1)
+
+        rewards["total_rewards"] = 2 * rewards["integrity_rewards"] + 2 * rewards["count_rewards"] + (2 + 3 * rewards["sim_rewards"])
 
         return rewards

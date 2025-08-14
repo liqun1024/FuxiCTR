@@ -52,7 +52,7 @@ if __name__ == "__main__":
         )
 
         final_df = pd.concat([df, results_df], axis=1)
-        final_df = final_df[['uid', 'target_item', 'item_hist', 'top_20_items', 'top_20_sims']]
+        final_df = final_df[['uid', 'target_item', 'item_hist', 'top_20_items', 'top_20_sims', 'label']]
 
         # Adjusting indices to be zero-based
         final_df['uid'] = final_df['uid'] - 1

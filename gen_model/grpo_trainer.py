@@ -13,6 +13,7 @@ class GRPOTrainer:
     This trainer uses a policy gradient approach to fine-tune the generative model.
     """
     def __init__(self, model, train_loader, eval_loader, 
+                 tokenizer,
                  K_SAMPLES=5, GENERATE_MAX_LENGTH=80,
                  optimizer=None, device=None):
         self.model = model.to(device)
@@ -23,7 +24,7 @@ class GRPOTrainer:
         self.GENERATE_MAX_LENGTH = GENERATE_MAX_LENGTH
         self.optimizer = optimizer if optimizer else optim.AdamW(self.model.parameters(), lr=config.LEARNING_RATE)
 
-        self.RewardCalculator = RewardCalculator(self.train_loader.tokenizer, config.CONFIG_DIR, config.MODEL_PATH, self.device)
+        self.RewardCalculator = RewardCalculator(tokenizer, config.CONFIG_DIR, config.MODEL_PATH, self.device)
 
     def _get_action_log_probs(self, logits, labels):
         batch_size = logits.shape[0]
@@ -59,10 +60,12 @@ class GRPOTrainer:
         for i, batch in progress_bar:
             input_ids = batch["input_ids"].to(self.device)
             attention_mask = batch["attention_mask"].to(self.device)
+            target_label = batch["target_label"].to(self.device)
             batch_size = input_ids.shape[0]
 
             expanded_input_ids = input_ids.repeat_interleave(self.K_SAMPLES, dim=0) # (batch_size * K, seq_len)
             expanded_attention_mask = attention_mask.repeat_interleave(self.K_SAMPLES, dim=0)
+            expanded_target_label = target_label.repeat_interleave(self.K_SAMPLES, dim=0)
 
             with torch.no_grad():
                 sampled_sequences = self.model.generate(
@@ -74,13 +77,13 @@ class GRPOTrainer:
                     temperature=0.7
                 )
 
-            rewards = self.RewardCalculator(sampled_sequences, expanded_input_ids) # (batch_size * K)
+            rewards = self.RewardCalculator(sampled_sequences, expanded_input_ids, expanded_target_label, self.K_SAMPLES) # (batch_size * K)
 
             outputs = self.model(input_ids=expanded_input_ids, attention_mask=expanded_attention_mask, labels=sampled_sequences)
             logits = outputs.logits # (batch_size * K, seq_len, max_vocab_size)
             log_probs = self._get_action_log_probs(logits, sampled_sequences) # (batch_size * K)
 
-            rewards_2d = rewards['total_rewards'].view(batch_size, self.K_SAMPLES)
+            rewards_2d = rewards['total_rewards'].view(batch_size, self.K_SAMPLES).detach()
             log_probs_2d = log_probs.view(batch_size, self.K_SAMPLES)
             advantages = rewards_2d - rewards_2d.mean(dim=1, keepdim=True).detach() # (batch_size, K)
             policy_loss = -(advantages * log_probs_2d).mean()

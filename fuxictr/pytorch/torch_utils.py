@@ -24,7 +24,7 @@ from torch import nn
 import random
 from functools import partial
 import re
-
+import transformers
 
 def seed_everything(seed=1029):
     random.seed(seed)

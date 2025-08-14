@@ -171,7 +171,8 @@ class GenRecTokenizer:
             token = token_ids[i]
 
             if 0 <= token < self.special_vocab_size:
-                decoded_items.append(-(token.item() + 1))
+                if token != self.pad_token_id:
+                    decoded_items.append(-(token.item() + 1))
                 i += 1
                 continue
             
