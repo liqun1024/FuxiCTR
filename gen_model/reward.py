@@ -51,7 +51,7 @@ class RewardCalculator:
         return torch.tensor(inputs, dtype=torch.long, device=self.device), torch.tensor(masks, dtype=torch.bool, device=self.device)
 
     def __call__(self, generated_ids, candidate_items, target_label, K_SAMPLES):
-        generated_items, missing_items = self.tokenizer.decode(generated_ids, has_similarity=True)
+        generated_items, missing_items = self.tokenizer.decode(generated_ids)
         candidate_items = [l for l in candidate_items for _ in range(K_SAMPLES)]
 
         rewards_item = ['total_rewards', 'integrity_rewards', 'count_rewards', 'sim_rewards']
