@@ -55,7 +55,7 @@ class GRPOTrainer:
     def _train_epoch(self, epoch):
         self.model.train()
         total_loss = 0
-        progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader), desc=f"Epoch {epoch+1}/{config.NUM_EPOCHS}")
+        progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
         
         for i, batch in progress_bar:
             input_ids = batch["input_ids"].to(self.device)
@@ -97,15 +97,23 @@ class GRPOTrainer:
             
             if (i + 1) % config.LOG_INTERVAL == 0:
                 progress_bar.set_postfix({"policy_loss": f"{total_loss / (i + 1):.4f}"})
+            
+            with open("log.log", "a") as f:
+                f.write(f"Epoch: {epoch},\titer: {i},\t{total_loss / (i + 1):.4f}\n")
+
+            if i % 2800 == 0:
+                self.evaluate()
+                self.save_checkpoint(epoch)
+
 
     def evaluate(self) -> float:
         self.model.eval()
-        total_loss = 0
-        self._init_metrics()
         with torch.no_grad():
             for batch in tqdm(self.eval_loader, desc="Evaluating"):
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
+                candidate_items = batch["input_items"]
+                target_label = batch["target_label"].to(self.device)
 
                 output = self.model.generate(
                     input_ids=input_ids,
@@ -113,7 +121,7 @@ class GRPOTrainer:
                     max_length=self.GENERATE_MAX_LENGTH,
                     strategy='greedy'
                 )
-                rewards = self.RewardCalculator(output, input_ids)
+                rewards = self.RewardCalculator(output, candidate_items, target_label, 1)
         
         print(f"===Evaluation===")
         for key, values in rewards.items():
@@ -123,16 +131,13 @@ class GRPOTrainer:
 
     def train(self):
         print(f"Starting GPO training on {self.device}...")
-        for epoch in range(config.NUM_EPOCHS):
-            self._train_epoch(epoch)
-            self.evaluate()
-            self.save_checkpoint(epoch)
+        self._train_epoch()
 
     def save_checkpoint(self, epoch: int):
-        if not os.path.exists(config.OUTPUT_DIR):
-            os.makedirs(config.OUTPUT_DIR)
+        if not os.path.exists(config.GRPO_OUTPUT_DIR):
+            os.makedirs(config.GRPO_OUTPUT_DIR)
         
-        path = os.path.join(config.OUTPUT_DIR, f"model_epoch_{epoch+1}.pth")
+        path = os.path.join(config.GRPO_OUTPUT_DIR, f"model_epoch_{epoch+1}.pth")
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),

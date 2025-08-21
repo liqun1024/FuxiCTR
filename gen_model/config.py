@@ -5,6 +5,7 @@ TRAIN_DATA_PATH = "/home/liqun03/FuxiCTR/my_datasets/taobao_sim_zero_based/train
 VAL_DATA_PATH = "/home/liqun03/FuxiCTR/my_datasets/taobao_sim_zero_based/valid_with_similarity.parquet" 
 TEST_DATA_PATH = "/home/liqun03/FuxiCTR/my_datasets/taobao_sim_zero_based/test_with_similarity.parquet"
 OUTPUT_DIR = "/home/liqun03/FuxiCTR/checkpoints/GenRec"
+GRPO_OUTPUT_DIR = "/home/liqun03/FuxiCTR/checkpoints/GenRec_GRPO"
 
 # -- Model Configuration --
 TOKEN_LEVEL_VOCAB_SIZES = [1024, 1024, 1024, 10000]
@@ -21,7 +22,7 @@ TOKENIZER_MAP_FILE = "/home/liqun03/FuxiCTR/checkpoints/item_tokens_zero_based.p
 
 # -- Training Configuration --
 DEVICE = "cuda:0"
-BATCH_SIZE = 32
+BATCH_SIZE = 24
 NUM_EPOCHS = 5
 LEARNING_RATE = 1e-3
 LOG_INTERVAL = 10 # Log training loss every N steps
