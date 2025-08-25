@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import os
 import config
+import copy
 
 from reward import RewardCalculator
 
@@ -15,6 +16,7 @@ class GRPOTrainer:
     def __init__(self, model, train_loader, eval_loader, 
                  tokenizer,
                  K_SAMPLES=5, GENERATE_MAX_LENGTH=80,
+                 BETA = 0.1, CLIP_PARAM=0.2,
                  optimizer=None, device=None):
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -24,40 +26,46 @@ class GRPOTrainer:
         self.GENERATE_MAX_LENGTH = GENERATE_MAX_LENGTH
         self.optimizer = optimizer if optimizer else optim.AdamW(self.model.parameters(), lr=config.LEARNING_RATE)
 
+        self.beta = BETA
+        self.clip_param = CLIP_PARAM
+
         self.RewardCalculator = RewardCalculator(tokenizer, config.CONFIG_DIR, config.MODEL_PATH, self.device)
 
     def _get_action_log_probs(self, logits, labels):
-        batch_size = logits.shape[0]
-        log_probs = torch.zeros(batch_size, device=self.device)
-
-        token_levels = len(self.model.token_level_vocab_sizes)
-
+        batch_size, seq_len = logits.shape[0], logits.shape[1]
+        
         t_logits = logits / self.model.loss_temperature
         log_probs_dist = torch.nn.functional.log_softmax(t_logits, dim=-1)
 
-        for i in range(token_levels):
-            head_labels = labels[:, i::token_levels].clone() # (batch_size * K, group_seq_len)
-            head_log_probs_dist = log_probs_dist[:, i::token_levels, :] # (batch_size * K, group_seq_len, max_vocab_size)
+        token_levels = len(self.model.token_level_vocab_sizes)
+        level_indices = torch.arange(seq_len, device=self.device) % token_levels
+        level_indices = level_indices.unsqueeze(0).expand(batch_size, -1)
 
-            if head_labels.numel() == 0:
-                continue
+        level_offsets_tensor = torch.tensor(self.model.level_offsets, device=self.device, dtype=labels.dtype)
+        offset_tensor = level_offsets_tensor[level_indices]
 
-            valid_token_mask = head_labels != self.model.pad_token_id
-            head_labels[valid_token_mask] -= self.model.level_offsets[i]
+        local_labels = labels - offset_tensor
+        
+        action_log_probs = log_probs_dist.gather(dim=-1, index=local_labels.unsqueeze(-1)).squeeze(-1)
+        
+        valid_token_mask = labels != self.model.pad_token_id
+        action_log_probs = action_log_probs.masked_fill(~valid_token_mask, 0.0)
 
-            action_log_probs = head_log_probs_dist.gather(dim=-1, index=head_labels.unsqueeze(-1)).squeeze(-1) # (batch_size * K, group_seq_len)
-
-            action_log_probs = action_log_probs.masked_fill(~valid_token_mask, 0.0) # Set invalid tokens to 0 log probability
-            log_probs += action_log_probs.sum(dim=1) # Sum over the sequence length
-
-        return log_probs
+        return action_log_probs
 
     def _train_epoch(self, epoch):
         self.model.train()
         total_loss = 0
         progress_bar = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
         
-        for i, batch in progress_bar:
+        for iter, batch in progress_bar:
+            if iter % self.REF_UPDATE_PER_ITER == 0:
+                ref_model = copy.deepcopy(self.model)
+                ref_model.to(self.device)
+                ref_model.eval()
+                for param in ref_model.parameters():
+                    param.requires_grad = False
+
             input_ids = batch["input_ids"].to(self.device)
             attention_mask = batch["attention_mask"].to(self.device)
             candidate_items = batch["input_items"]
@@ -78,32 +86,51 @@ class GRPOTrainer:
                     temperature=0.7
                 )
 
-            rewards = self.RewardCalculator(sampled_sequences, candidate_items, expanded_target_label, self.K_SAMPLES) # (batch_size * K)
-
             outputs = self.model(input_ids=expanded_input_ids, attention_mask=expanded_attention_mask, labels=sampled_sequences)
             logits = outputs.logits # (batch_size * K, seq_len, max_vocab_size)
-            log_probs = self._get_action_log_probs(logits, sampled_sequences) # (batch_size * K)
+            log_probs = self._get_action_log_probs(logits, sampled_sequences) # (batch_size * K, seq_len)
+            old_log_probs = log_probs.detach() # (batch_size * K, seq_len)
 
-            rewards_2d = rewards['total_rewards'].view(batch_size, self.K_SAMPLES).detach()
-            log_probs_2d = log_probs.view(batch_size, self.K_SAMPLES)
-            advantages = rewards_2d - rewards_2d.mean(dim=1, keepdim=True).detach() # (batch_size, K)
-            policy_loss = -(advantages * log_probs_2d).mean()
+            with torch.no_grad():
+                ref_outputs = ref_model(input_ids=expanded_input_ids, attention_mask=expanded_attention_mask, labels=sampled_sequences)
+                ref_logits = ref_outputs.logits
+            ref_log_probs = self._get_action_log_probs(ref_logits, sampled_sequences) # (batch_size * K)
 
-            self.optimizer.zero_grad()
-            policy_loss.backward()
-            self.optimizer.step()
+            token_mask = sampled_sequences != self.model.pad_token_id
 
-            total_loss += policy_loss.item()
+            for grpo_iter in range(self.mu):
+                outputs = self.model(input_ids=expanded_input_ids, attention_mask=expanded_attention_mask, labels=sampled_sequences)
+                logits = outputs.logits # (batch_size * K, seq_len, max_vocab_size)
+                log_probs = self._get_action_log_probs(logits, sampled_sequences) # (batch_size * K, seq_len)
+                rewards = self.RewardCalculator(sampled_sequences, candidate_items, expanded_target_label, self.K_SAMPLES) # (batch_size * K)
+                rewards_2d = rewards['total_rewards'].view(batch_size, self.K_SAMPLES).detach()
+                advantages = rewards_2d - rewards_2d.mean(dim=1, keepdim=True).detach() # (batch_size, K)
+
+                ratio = torch.exp(log_probs - old_log_probs) # (batch_size * K, seq_len)
+                surr1 = ratio * advantages
+                surr2 = torch.clamp(ratio, 1 - self.clip_param, 1 + self.clip_param) * advantages
+                surrogate_loss = torch.min(surr1, surr2)
+
+                kl = torch.exp(ref_log_probs - log_probs) - (ref_log_probs - log_probs) - 1 #(batch_size * K, seq_len)
+
+                pre_token_loss = surrogate_loss - self.beta * kl
+                loss = -((pre_token_loss * token_mask).sum(dim=1) / token_mask.sum(dim=1)).mean()
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+
+                total_loss += loss.item()
             
-            if (i + 1) % config.LOG_INTERVAL == 0:
-                progress_bar.set_postfix({"policy_loss": f"{total_loss / (i + 1):.4f}"})
-            
+            progress_bar.set_postfix({"policy_loss": f"{total_loss / (iter + 1):.4f}"})
             with open("log.log", "a") as f:
-                f.write(f"Epoch: {epoch},\titer: {i},\t{total_loss / (i + 1):.4f}\n")
+                f.write(f"Epoch: {epoch},\titer: {iter},\t{total_loss / (iter + 1):.4f}\n")
 
-            if i % 2800 == 0:
+            if iter % 200 == 0:
                 self.evaluate()
                 self.save_checkpoint(epoch)
+            
+            
 
 
     def evaluate(self) -> float:
