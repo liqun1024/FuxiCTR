@@ -22,7 +22,7 @@ TOKENIZER_MAP_FILE = "/home/liqun03/FuxiCTR/checkpoints/item_tokens_zero_based.p
 
 # -- Training Configuration --
 DEVICE = "cuda:0"
-BATCH_SIZE = 24
+BATCH_SIZE = 20
 NUM_EPOCHS = 5
 LEARNING_RATE = 1e-3
 LOG_INTERVAL = 10 # Log training loss every N steps

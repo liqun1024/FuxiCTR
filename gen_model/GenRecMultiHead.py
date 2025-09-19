@@ -217,7 +217,8 @@ class GenRecMultiHead(T5ForConditionalGeneration):
 
         batch_size = input_ids.shape[0]
         input_length = (input_ids != self.pad_token_id).sum(dim=-1)
-        generated_length = input_length - len(self.level_offsets)  # max generated length is all candidate tokens
+        level_len = len(self.level_offsets)
+        generated_length = (input_length - level_len) / (level_len - 1) * level_len  # max generated length is all candidate tokens
         indices = torch.arange(max_length, device=generated_ids.device)
         mask = indices.expand(batch_size, -1) >= generated_length.unsqueeze(-1)
         generated_ids = generated_ids.masked_fill(mask, self.pad_token_id)

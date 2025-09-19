@@ -61,7 +61,7 @@ class RewardCalculator:
             if missing_items[i] > 0:
                 integrity_rewards = len(gen_items) / (len(gen_items) + missing_items[i])
             else:
-                integrity_rewards = 1.0
+                integrity_rewards = 1.0    
 
             gen_items_unique = set(gen_items)
             valid_items = len(gen_items)
@@ -82,10 +82,11 @@ class RewardCalculator:
         topk_item_dict = {"item_hist": topk_item}
         sim_loss = self.SIM.get_loss((item_dict, item_mask, topk_item_dict, topk_mask, target_label))
         sim_loss = sim_loss.squeeze(1).reshape(-1, K_SAMPLES)
-        sim_rewards = sim_loss - sim_loss.min(dim=1, keepdim=True)[0]
+        sim_rewards = sim_loss.max(dim=1, keepdim=True)[0] - sim_loss
         sim_rewards = torch.nn.functional.normalize(sim_rewards)
-        rewards["sim_rewards"] = sim_rewards.reshape(-1)
+        rewards["sim_rewards"] = sim_rewards.reshape(-1).detach()
+        rewards["sim_loss"] = sim_loss.reshape(-1).detach()
 
-        rewards["total_rewards"] = 2 * rewards["integrity_rewards"] + 2 * rewards["count_rewards"] + (2 + 3 * rewards["sim_rewards"])
+        rewards["total_rewards"] = rewards["integrity_rewards"] # + rewards["count_rewards"] + (2 + 3 * rewards["sim_rewards"])
 
         return rewards
