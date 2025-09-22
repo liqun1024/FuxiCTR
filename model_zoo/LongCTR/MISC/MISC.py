@@ -44,7 +44,7 @@ class MISC(BaseModel):
                 self.item_info_dim += spec.get("embedding_dim", embedding_dim) 
         self.accumulation_steps = accumulation_steps
         self.embedding_layer = FeatureEmbedding(feature_map, embedding_dim)
-        self.category_attention = CategoryInterestAttention(embedding_dim, max_categories=100)
+        self.category_attention = CategoryInterestAttention(self.item_info_dim, max_categories=100)
         input_dim = feature_map.sum_emb_out_dim() + self.item_info_dim
         self.dnn = MLP_Block(input_dim=input_dim,
                              output_dim=1,
