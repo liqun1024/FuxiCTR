@@ -91,13 +91,17 @@ class BatchCollator(object):
 
         item_dict = {}
         item_dict["item_hist"] = batch_dict["item_hist"].numpy()
+        item_dict["cate_hist"] = batch_dict["cate_hist"].numpy()
         batch_dict.pop("item_hist", None)
+        batch_dict.pop("cate_hist", None)
         if self.max_len:
             item_dict["item_hist"] = item_dict["item_hist"][:, -self.max_len:]
-        
+            item_dict["cate_hist"] = item_dict["cate_hist"][:, -self.max_len:]
+
         mask = (torch.from_numpy(item_dict["item_hist"]) > 0).float() # zeros for masked positions
 
         item_dict["item_hist"] = torch.from_numpy(item_dict["item_hist"])
+        item_dict["cate_hist"] = torch.from_numpy(item_dict["cate_hist"])
 
         return batch_dict, item_dict, mask[:, :-1]
 
