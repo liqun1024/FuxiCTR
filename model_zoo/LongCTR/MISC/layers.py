@@ -48,6 +48,9 @@ class TransformerLayer(nn.Module):
         x_norm = self.norm2(x)
         ffn_output = self.ffn(x_norm)
         output = x + self.dropout2(ffn_output)
+
+        # if torch.any(torch.isnan(output)):
+        #     raise ValueError("Error")
         
         return output
 
@@ -119,6 +122,8 @@ class CategoryInterestAttention(nn.Module):
 
         # 1. 获取每个用户的不重复category和对应的mask
         unique_cats, cat_mask = self.get_unique_categories_and_mask(sequence_cat_ids, sequence_mask)
+        cat_mask = cat_mask.bool()
+        cat_mask = ~cat_mask
 
         # 2. 准备Q, K, V
         cat_match_mask = unique_cats.unsqueeze(2) == sequence_cat_ids.unsqueeze(1)
@@ -135,8 +140,8 @@ class CategoryInterestAttention(nn.Module):
         queries_flat = queries.view(-1, 1, self.embedding_dim)
         keys_flat = sequence_item_emb.unsqueeze(1).expand(-1, self.max_categories, -1, -1)
         keys_flat = keys_flat.reshape(-1, seq_len, self.embedding_dim)
+        cat_match_mask[cat_mask] = True
         attn_mask_flat = cat_match_mask.view(-1, 1, seq_len)
-        attn_mask_flat = ~attn_mask_flat 
         
         # 阶段一计算: 多层Transformer叠加
         # K和V在各层之间共享，只对Q进行更新
@@ -156,13 +161,15 @@ class CategoryInterestAttention(nn.Module):
         # K, V: category_interest_vectors (B, max_cat, D)
         # mask: cat_mask (B, max_cat)
         # 使用简单的Attention, 无FFN和矩阵变换
+
         final_interest_vector = self.target_attention_net(
             target_item_emb.unsqueeze(1),
             category_interest_vectors,
             category_interest_vectors,
             cat_mask.unsqueeze(1) # (B, 1, max_cat)
         )
-
+        if torch.any(torch.isnan(final_interest_vector)):
+            raise ValueError("Error")
         return final_interest_vector.squeeze(1)
 
     def get_unique_categories_and_mask(self, sequence_cat_ids: torch.Tensor, sequence_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:

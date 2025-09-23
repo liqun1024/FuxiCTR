@@ -78,6 +78,8 @@ class MISC(BaseModel):
         feature_emb = torch.cat(emb_list, dim=-1)
         y_pred = self.dnn(feature_emb)
         return_dict = {"y_pred": y_pred}
+        if torch.any(torch.isnan(y_pred)):
+            raise ValueError("Error")
         return return_dict
 
     def get_inputs(self, inputs, feature_source=None):
