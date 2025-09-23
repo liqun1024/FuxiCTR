@@ -14,7 +14,7 @@ Base:
 
     dataset_id: taobao
     shuffle: True
-    batch_size: 8192
+    batch_size: 128
 
     loss: 'binary_crossentropy'
     metrics: [AUC, logloss]
@@ -87,3 +87,22 @@ SIM: # This is a config template
     batch_norm: False
 
     # learning_rate: 4.0e-2
+
+MISC: # This is a config template
+    model: MISC
+
+    max_len: 200
+    embedding_regularizer: 0
+    net_regularizer: 0
+    embedding_dim: 16
+    dnn_hidden_units: [64, 32]
+    dnn_activations: relu
+    attention_hidden_units: [64]
+    attention_hidden_activations: "Dice"
+    attention_output_activation: null
+    attention_dropout: 0
+    din_use_softmax: True
+    net_dropout: 0
+    batch_norm: False
+
+    learning_rate: 3.0e-2

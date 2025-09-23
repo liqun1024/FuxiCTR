@@ -39,7 +39,7 @@ if __name__ == '__main__':
     '''
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='./taobao_config', help='The config directory.')
-    parser.add_argument('--expid', type=str, default='SIM', help='The experiment id to run.')
+    parser.add_argument('--expid', type=str, default='MISC', help='The experiment id to run.')
     parser.add_argument('--gpu', type=int, default=0, help='The gpu index, -1 for cpu')
     parser.add_argument('--learning_rate', type=float, default=1e-3, help='The model learning rate.')
     args = vars(parser.parse_args())

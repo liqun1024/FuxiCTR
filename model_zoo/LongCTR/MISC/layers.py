@@ -113,6 +113,7 @@ class CategoryInterestAttention(nn.Module):
         :return: 最终的兴趣向量 (B, D)
         """
         batch_size, seq_len, _ = sequence_item_emb.shape
+        sequence_mask = sequence_mask.bool()
 
         # --- 阶段一：类目内注意力 ---
 
@@ -135,6 +136,7 @@ class CategoryInterestAttention(nn.Module):
         keys_flat = sequence_item_emb.unsqueeze(1).expand(-1, self.max_categories, -1, -1)
         keys_flat = keys_flat.reshape(-1, seq_len, self.embedding_dim)
         attn_mask_flat = cat_match_mask.view(-1, 1, seq_len)
+        attn_mask_flat = ~attn_mask_flat 
         
         # 阶段一计算: 多层Transformer叠加
         # K和V在各层之间共享，只对Q进行更新
