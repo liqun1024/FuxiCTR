@@ -1,3 +1,5 @@
+# 注意，当前使用的nn.MultiheadAttention的MASK和torch的文档描述的相反。
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -161,7 +163,7 @@ class CategoryInterestAttention(nn.Module):
         # K, V: category_interest_vectors (B, max_cat, D)
         # mask: cat_mask (B, max_cat)
         # 使用简单的Attention, 无FFN和矩阵变换
-
+        cat_mask = ~cat_mask
         final_interest_vector = self.target_attention_net(
             target_item_emb.unsqueeze(1),
             category_interest_vectors,

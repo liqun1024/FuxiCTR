@@ -22,7 +22,7 @@ Base:
     optimizer: adam
     epochs: 1
     seed: 42
-    eval_steps: 5
+    eval_steps: 320
 
     monitor: 'AUC'
     monitor_mode: 'max'
