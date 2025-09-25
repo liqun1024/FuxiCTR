@@ -9,7 +9,7 @@ class TransformerLayer(nn.Module):
     """
     标准的Transformer层，采用pre-norm结构 (LayerNorm -> Attention/FFN -> Residual).
     """
-    def __init__(self, embedding_dim, num_heads, dim_feedforward=2048, dropout=0.1):
+    def __init__(self, embedding_dim, num_heads, dim_feedforward=386, dropout=0.1):
         super().__init__()
         # 使用 batch_first=True 来匹配 (B, T, D) 的输入格式
         self.attention = nn.MultiheadAttention(embedding_dim, num_heads, dropout=dropout, batch_first=True)
@@ -77,7 +77,7 @@ class CategoryInterestAttention(nn.Module):
     1. 类目内注意力: 对每个category分组，以该category最后一个item为Q，该category所有item为KV，得到category兴趣向量。
     2. 目标注意力: 以target_item为Q，以所有category兴趣向量为KV，得到最终的用户序列兴趣向量。
     """
-    def __init__(self, embedding_dim: int, max_categories: int, num_heads: int = 4, num_layers: int = 2, dim_feedforward: int = 2048, dropout: float = 0.1):
+    def __init__(self, embedding_dim: int, max_categories: int, num_heads: int = 4, num_layers: int = 1, dim_feedforward: int = 386, dropout: float = 0.1):
         """
         初始化
         :param embedding_dim: item嵌入向量的维度
