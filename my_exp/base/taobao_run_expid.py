@@ -33,6 +33,8 @@ import argparse
 import os
 from pathlib import Path
 
+import torch
+
 
 if __name__ == '__main__':
     ''' Usage: python run_expid.py --config {config_dir} --expid {experiment_id} --gpu {gpu_device_id}
@@ -63,6 +65,11 @@ if __name__ == '__main__':
     model_class = eval(params['model'])
     model = model_class(feature_map, **params)
     model.count_parameters() # print number of parameters used in model
+
+    checkpoint = torch.load(model.checkpoint, map_location=model.device)
+    filtered_checkpoint = {k: v for k, v in checkpoint.items() if 'embedding_layer' not in k}
+    print(filtered_checkpoint.keys())
+    model.load_state_dict(filtered_checkpoint, strict=False)
 
     train_gen, valid_gen = TaobaoDataLoader(feature_map, stage='train', **params).make_iterator()
     model.fit(train_gen, validation_data=valid_gen, **params)

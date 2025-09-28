@@ -77,7 +77,7 @@ class CategoryInterestAttention(nn.Module):
     1. 类目内注意力: 对每个category分组，以该category最后一个item为Q，该category所有item为KV，得到category兴趣向量。
     2. 目标注意力: 以target_item为Q，以所有category兴趣向量为KV，得到最终的用户序列兴趣向量。
     """
-    def __init__(self, embedding_dim: int, max_categories: int, num_heads: int = 4, num_layers: int = 1, dim_feedforward: int = 386, dropout: float = 0.1):
+    def __init__(self, embedding_dim: int, max_categories: int, num_heads: int = 8, num_layers: int = 2, dim_feedforward: int = 768, dropout: float = 0.1):
         """
         初始化
         :param embedding_dim: item嵌入向量的维度

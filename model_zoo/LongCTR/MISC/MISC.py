@@ -3,7 +3,7 @@ from torch import nn
 import numpy as np
 from pandas.core.common import flatten
 from fuxictr.pytorch.models import BaseModel
-from fuxictr.pytorch.layers import FeatureEmbedding, MLP_Block, DIN_Attention, Dice
+from fuxictr.pytorch.layers import FeatureEmbedding, MLP_Block, MultiHeadTargetAttention, Dice
 from fuxictr.utils import not_in_whitelist
 
 from model_zoo.LongCTR.MISC.layers import CategoryInterestAttention
@@ -21,6 +21,7 @@ class MISC(BaseModel):
                  attention_dropout=0,
                  learning_rate=1e-3, 
                  embedding_dim=10, 
+                 short_seq_len=199,
                  net_dropout=0, 
                  batch_norm=False, 
                  din_use_softmax=False,
@@ -36,6 +37,7 @@ class MISC(BaseModel):
                                   **kwargs)
         if isinstance(dnn_activations, str) and dnn_activations.lower() == "dice":
             dnn_activations = [Dice(units) for units in dnn_hidden_units]
+        self.short_seq_len = short_seq_len
         self.feature_map = feature_map
         self.embedding_dim = embedding_dim
         self.item_info_dim = 0
@@ -45,6 +47,12 @@ class MISC(BaseModel):
         self.accumulation_steps = accumulation_steps
         self.embedding_layer = FeatureEmbedding(feature_map, embedding_dim)
         self.category_attention = CategoryInterestAttention(self.item_info_dim, max_categories=200)
+
+        self.short_attention = MultiHeadTargetAttention(self.item_info_dim,
+                                                        attention_dim=256,
+                                                        num_heads=4,
+                                                        dropout_rate=0.1)
+
         input_dim = feature_map.sum_emb_out_dim() + self.item_info_dim
         self.dnn = MLP_Block(input_dim=input_dim,
                              output_dim=1,
@@ -73,8 +81,15 @@ class MISC(BaseModel):
         target_emb = item_feat_emb[:, -1, :]
         sequence_emb = item_feat_emb[:, 0:-1, :]
         cate_hist = cate_hist[:, 0:-1]
-        pooling_emb = self.category_attention(target_emb, sequence_emb, cate_hist, mask)
-        emb_list += [target_emb, pooling_emb]
+        # pooling_emb = self.category_attention(target_emb, sequence_emb, cate_hist, mask)
+
+        # short_seq_emb
+        short_seq_emb = item_feat_emb[:, -self.short_seq_len:-1, :]
+        short_mask = mask[:, -self.short_seq_len:-1]
+        short_interest_emb = self.short_attention(target_emb, short_seq_emb, short_mask)
+
+        # emb_list += [target_emb, pooling_emb, short_interest_emb]
+        emb_list += [target_emb, short_interest_emb]
         feature_emb = torch.cat(emb_list, dim=-1)
         y_pred = self.dnn(feature_emb)
         return_dict = {"y_pred": y_pred}
