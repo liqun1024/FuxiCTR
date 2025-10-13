@@ -5,6 +5,80 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple
 
+class MultiheadAttention(nn.Module):
+    """
+    自定义多头注意力层，为了后续修改和实验.
+    """
+    def __init__(self, embedding_dim, num_heads, dropout=0.0, batch_first=True):
+        super().__init__()
+        if embedding_dim % num_heads != 0:
+            raise ValueError(f"embedding_dim ({embedding_dim}) must be divisible by num_heads ({num_heads})")
+
+        self.embedding_dim = embedding_dim
+        self.num_heads = num_heads
+        self.head_dim = embedding_dim // num_heads
+        self.batch_first = batch_first
+
+        self.q_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.k_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.v_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.out_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, query, key, value, key_padding_mask=None, attn_mask=None):
+        if self.batch_first:
+            # (B, T, D)
+            batch_size, seq_len_q, _ = query.shape
+            _, seq_len_k, _ = key.shape
+            _, seq_len_v, _ = value.shape
+        else:
+            # (T, B, D)
+            seq_len_q, batch_size, _ = query.shape
+            seq_len_k, _, _ = key.shape
+            seq_len_v, _, _ = value.shape
+            query = query.transpose(0, 1)
+            key = key.transpose(0, 1)
+            value = value.transpose(0, 1)
+
+        # 1. 线性投射
+        q = self.q_proj(query)
+        k = self.k_proj(key)
+        v = self.v_proj(value)
+
+        # 2. 分割成多头
+        q = q.reshape(batch_size, seq_len_q, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_q, h_dim)
+        k = k.reshape(batch_size, seq_len_k, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_k, h_dim)
+        v = v.reshape(batch_size, seq_len_v, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_v, h_dim)
+
+        # 3. 缩放点积注意力
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)  # (B, n_heads, T_q, T_k)
+
+        if attn_mask is not None:
+            # attn_mask is expected to be broadcastable to the scores shape.
+            # For causal mask, it's typically (T_q, T_k)
+            scores = scores + attn_mask
+
+        if key_padding_mask is not None:
+            # key_padding_mask: (B, T_k)
+            # We need to broadcast it to (B, n_heads, T_q, T_k)
+            scores = scores.masked_fill(key_padding_mask.unsqueeze(1).unsqueeze(2), float('-inf'))
+
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        # 4. 计算输出
+        attn_output = torch.matmul(attn_weights, v)  # (B, n_heads, T_q, h_dim)
+
+        # 5. 拼接多头并进行最终线性投射
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len_q, self.embedding_dim)
+        output = self.out_proj(attn_output)
+
+        if not self.batch_first:
+            output = output.transpose(0, 1)
+
+        return output, attn_weights
+
+
 class TransformerLayer(nn.Module):
     """
     标准的Transformer层，采用pre-norm结构 (LayerNorm -> Attention/FFN -> Residual).
@@ -12,7 +86,7 @@ class TransformerLayer(nn.Module):
     def __init__(self, embedding_dim, num_heads, dim_feedforward=386, dropout=0.1):
         super().__init__()
         # 使用 batch_first=True 来匹配 (B, T, D) 的输入格式
-        self.attention = nn.MultiheadAttention(embedding_dim, num_heads, dropout=dropout, batch_first=True)
+        self.attention = MultiheadAttention(embedding_dim, num_heads, dropout=dropout, batch_first=True)
         self.ffn = nn.Sequential(
             nn.Linear(embedding_dim, dim_feedforward),
             nn.ReLU(),
