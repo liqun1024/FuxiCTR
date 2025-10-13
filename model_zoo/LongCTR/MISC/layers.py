@@ -148,8 +148,10 @@ class CategoryInterestAttention(nn.Module):
         # 阶段一计算: 多层Transformer叠加
         # K和V在各层之间共享，只对Q进行更新
         x = queries_flat
-        for layer in self.category_attention_stack:
-            x = layer(x, keys_flat, keys_flat, attn_mask_flat)
+        # for layer in self.category_attention_stack:
+        #     x = layer(x, keys_flat, keys_flat, attn_mask_flat)
+        x = (keys_flat * attn_mask_flat.transpose(-1, -2).float()).sum(dim=1) / attn_mask_flat.sum(dim=[1, 2]).clamp(min=1.0).unsqueeze(1)
+        x = x.unsqueeze(1)
         category_interest_vectors_flat = x
         
         # 恢复形状

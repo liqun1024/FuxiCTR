@@ -1,5 +1,8 @@
 taobao:
     data_root: '../../my_datasets'
-    train_data: '../../my_datasets/taobao/train.parquet'
-    valid_data: '../../my_datasets/taobao/valid.parquet'
-    test_data: '../../my_datasets/taobao/test.parquet'
+    # train_data: '../../my_datasets/taobao/train.parquet'
+    # valid_data: '../../my_datasets/taobao/valid.parquet'
+    # test_data: '../../my_datasets/taobao/test.parquet'
+    train_data: '../../my_datasets/taobao/filter_train.parquet'
+    valid_data: '../../my_datasets/taobao/filter_valid.parquet'
+    test_data: '../../my_datasets/taobao/filter_test.parquet'

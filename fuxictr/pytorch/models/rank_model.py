@@ -133,7 +133,7 @@ class BaseModel(nn.Module):
     def model_to_device(self):
         self.to(device=self.device)
 
-    def lr_decay(self, factor=0.1, min_lr=1e-6):
+    def lr_decay(self, factor=0.5, min_lr=1e-6):
         for param_group in self.optimizer.param_groups:
             reduced_lr = max(param_group["lr"] * factor, min_lr)
             param_group["lr"] = reduced_lr

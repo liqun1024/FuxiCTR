@@ -19,10 +19,10 @@ Base:
     loss: 'binary_crossentropy'
     metrics: [AUC, logloss]
     task: binary_classification
-    optimizer: adam
+    optimizer: AdamW
     epochs: 1
     seed: 42
-    eval_steps: 320
+    eval_steps: 100
 
     monitor: 'AUC'
     monitor_mode: 'max'
