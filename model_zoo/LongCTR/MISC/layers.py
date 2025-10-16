@@ -95,52 +95,55 @@ class HSTU(nn.Module):
         self.q_proj = nn.Linear(embedding_dim, embedding_dim)
         self.k_proj = nn.Linear(embedding_dim, embedding_dim)
         self.v_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.u_proj = nn.Linear(embedding_dim, embedding_dim)
+
         self.out_proj = nn.Linear(embedding_dim, embedding_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, query, key, value, key_padding_mask=None, attn_mask=None):
+    def forward(self, query, key, key_padding_mask=None, attn_mask=None):
         if self.batch_first:
             # (B, T, D)
             batch_size, seq_len_q, _ = query.shape
             _, seq_len_k, _ = key.shape
-            _, seq_len_v, _ = value.shape
         else:
             # (T, B, D)
             seq_len_q, batch_size, _ = query.shape
             seq_len_k, _, _ = key.shape
-            seq_len_v, _, _ = value.shape
             query = query.transpose(0, 1)
             key = key.transpose(0, 1)
-            value = value.transpose(0, 1)
 
         # 1. 线性投射
         q = self.q_proj(query)
         k = self.k_proj(key)
-        v = self.v_proj(value)
+        v = self.v_proj(key)
+        u = self.u_proj(query)
 
         # 2. 分割成多头
         q = q.reshape(batch_size, seq_len_q, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_q, h_dim)
         k = k.reshape(batch_size, seq_len_k, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_k, h_dim)
-        v = v.reshape(batch_size, seq_len_v, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_v, h_dim)
+        v = v.reshape(batch_size, seq_len_k, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_k, h_dim)
+        u = u.reshape(batch_size, seq_len_q, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_q, h_dim)
 
         # 3. 缩放点积注意力
         scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)  # (B, n_heads, T_q, T_k)
+        
+        scores = F.sigmoid(scores)  # (B, n_heads, T_q, T_k)
 
         if attn_mask is not None:
             # attn_mask is expected to be broadcastable to the scores shape.
             # For causal mask, it's typically (T_q, T_k)
-            scores = scores + attn_mask
+            scores = scores.masked_fill(attn_mask == 0, 0)
 
         if key_padding_mask is not None:
             # key_padding_mask: (B, T_k)
             # We need to broadcast it to (B, n_heads, T_q, T_k)
-            scores = scores.masked_fill(key_padding_mask.unsqueeze(1).unsqueeze(2), float('-inf'))
+            scores = scores.masked_fill(key_padding_mask.unsqueeze(1).unsqueeze(2), 0)
 
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
+        attn_weights = self.dropout(scores)
 
         # 4. 计算输出
         attn_output = torch.matmul(attn_weights, v)  # (B, n_heads, T_q, h_dim)
+        attn_output = torch.mul(attn_output, u)  # (B, n_heads, T_q, h_dim)
 
         # 5. 拼接多头并进行最终线性投射
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len_q, self.embedding_dim)
