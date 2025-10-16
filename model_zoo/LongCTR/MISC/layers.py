@@ -77,6 +77,79 @@ class MultiheadAttention(nn.Module):
             output = output.transpose(0, 1)
 
         return output, attn_weights
+    
+class HSTU(nn.Module):
+    """
+    自定义多头注意力层，为了后续修改和实验.
+    """
+    def __init__(self, embedding_dim, num_heads, dropout=0.0, batch_first=True):
+        super().__init__()
+        if embedding_dim % num_heads != 0:
+            raise ValueError(f"embedding_dim ({embedding_dim}) must be divisible by num_heads ({num_heads})")
+
+        self.embedding_dim = embedding_dim
+        self.num_heads = num_heads
+        self.head_dim = embedding_dim // num_heads
+        self.batch_first = batch_first
+
+        self.q_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.k_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.v_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.out_proj = nn.Linear(embedding_dim, embedding_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, query, key, value, key_padding_mask=None, attn_mask=None):
+        if self.batch_first:
+            # (B, T, D)
+            batch_size, seq_len_q, _ = query.shape
+            _, seq_len_k, _ = key.shape
+            _, seq_len_v, _ = value.shape
+        else:
+            # (T, B, D)
+            seq_len_q, batch_size, _ = query.shape
+            seq_len_k, _, _ = key.shape
+            seq_len_v, _, _ = value.shape
+            query = query.transpose(0, 1)
+            key = key.transpose(0, 1)
+            value = value.transpose(0, 1)
+
+        # 1. 线性投射
+        q = self.q_proj(query)
+        k = self.k_proj(key)
+        v = self.v_proj(value)
+
+        # 2. 分割成多头
+        q = q.reshape(batch_size, seq_len_q, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_q, h_dim)
+        k = k.reshape(batch_size, seq_len_k, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_k, h_dim)
+        v = v.reshape(batch_size, seq_len_v, self.num_heads, self.head_dim).transpose(1, 2)  # (B, n_heads, T_v, h_dim)
+
+        # 3. 缩放点积注意力
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)  # (B, n_heads, T_q, T_k)
+
+        if attn_mask is not None:
+            # attn_mask is expected to be broadcastable to the scores shape.
+            # For causal mask, it's typically (T_q, T_k)
+            scores = scores + attn_mask
+
+        if key_padding_mask is not None:
+            # key_padding_mask: (B, T_k)
+            # We need to broadcast it to (B, n_heads, T_q, T_k)
+            scores = scores.masked_fill(key_padding_mask.unsqueeze(1).unsqueeze(2), float('-inf'))
+
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        # 4. 计算输出
+        attn_output = torch.matmul(attn_weights, v)  # (B, n_heads, T_q, h_dim)
+
+        # 5. 拼接多头并进行最终线性投射
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len_q, self.embedding_dim)
+        output = self.out_proj(attn_output)
+
+        if not self.batch_first:
+            output = output.transpose(0, 1)
+
+        return output, attn_weights
 
 
 class TransformerLayer(nn.Module):
@@ -111,6 +184,17 @@ class TransformerLayer(nn.Module):
         # PyTorch的MultiheadAttention期望的key_padding_mask中, True表示需要mask的位置
         # 我们的attn_mask中, 0表示需要mask的位置, 所以需要转换
         key_padding_mask = (attn_mask.squeeze(1) == 0) if attn_mask is not None else None
+
+        # # 修改部分
+        # attn_output, _ = self.attention(query, key, value, key_padding_mask=key_padding_mask)        
+        # x = query + self.dropout1(attn_output)
+
+        # # 2. Pre-Norm + FFN + Residual
+        # x_norm = self.norm2(x)
+        # ffn_output = self.ffn(x_norm)
+        # output = x + self.dropout2(ffn_output)
+        # return output
+        # # 修改截止
 
         # Pre-norm
         q_norm = self.norm1(query)
@@ -151,7 +235,7 @@ class CategoryInterestAttention(nn.Module):
     1. 类目内注意力: 对每个category分组，以该category最后一个item为Q，该category所有item为KV，得到category兴趣向量。
     2. 目标注意力: 以target_item为Q，以所有category兴趣向量为KV，得到最终的用户序列兴趣向量。
     """
-    def __init__(self, embedding_dim: int, max_categories: int, num_heads: int = 8, num_layers: int = 2, dim_feedforward: int = 768, dropout: float = 0.1):
+    def __init__(self, embedding_dim: int, max_categories: int, num_heads: int = 8, num_layers: int = 2, dim_feedforward: int = 768, dropout: float = 0.0):
         """
         初始化
         :param embedding_dim: item嵌入向量的维度
@@ -176,7 +260,8 @@ class CategoryInterestAttention(nn.Module):
         ])
         
         # 阶段二: 简单的缩放点积注意力 (无FFN, 无矩阵变换)
-        self.target_attention_net = ScaledDotProductAttention(embedding_dim)
+        # self.target_attention_net = ScaledDotProductAttention(embedding_dim)
+        self.target_attention_net = MultiheadAttention(embedding_dim, 2, dropout=dropout, batch_first=True)
 
     def forward(self, 
                 target_item_emb: torch.Tensor, 
@@ -222,10 +307,10 @@ class CategoryInterestAttention(nn.Module):
         # 阶段一计算: 多层Transformer叠加
         # K和V在各层之间共享，只对Q进行更新
         x = queries_flat
-        # for layer in self.category_attention_stack:
-        #     x = layer(x, keys_flat, keys_flat, attn_mask_flat)
-        x = (keys_flat * attn_mask_flat.transpose(-1, -2).float()).sum(dim=1) / attn_mask_flat.sum(dim=[1, 2]).clamp(min=1.0).unsqueeze(1)
-        x = x.unsqueeze(1)
+        for layer in self.category_attention_stack:
+            x = layer(x, keys_flat, keys_flat, attn_mask_flat)
+        # x = (keys_flat * attn_mask_flat.transpose(-1, -2).float()).sum(dim=1) / attn_mask_flat.sum(dim=[1, 2]).clamp(min=1.0).unsqueeze(1)
+        # x = x.unsqueeze(1)
         category_interest_vectors_flat = x
         
         # 恢复形状
@@ -239,12 +324,18 @@ class CategoryInterestAttention(nn.Module):
         # K, V: category_interest_vectors (B, max_cat, D)
         # mask: cat_mask (B, max_cat)
         # 使用简单的Attention, 无FFN和矩阵变换
-        cat_mask = ~cat_mask
-        final_interest_vector = self.target_attention_net(
+        # cat_mask = ~cat_mask
+        # final_interest_vector = self.target_attention_net(
+        #     target_item_emb.unsqueeze(1),
+        #     category_interest_vectors,
+        #     category_interest_vectors,
+        #     cat_mask.unsqueeze(1) # (B, 1, max_cat)
+        # )
+        final_interest_vector, _ = self.target_attention_net(
             target_item_emb.unsqueeze(1),
             category_interest_vectors,
             category_interest_vectors,
-            cat_mask.unsqueeze(1) # (B, 1, max_cat)
+            cat_mask # (B, 1, max_cat)
         )
         if torch.any(torch.isnan(final_interest_vector)):
             raise ValueError("Error")
